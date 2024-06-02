@@ -5,26 +5,26 @@ import {
     ERC20Interface,
     ERC721Interface,
     ERC1155Interface
-} from "seaport-types/src/interfaces/AbridgedTokenInterfaces.sol";
+} from "../seaport-types/src/interfaces/AbridgedTokenInterfaces.sol";
 
-import { ItemType } from "seaport-types/src/lib/ConsiderationEnums.sol";
+import { ItemType } from "../seaport-types/src/lib/ConsiderationEnums.sol";
 
 import {
     ReceivedItem,
     Schema,
     SpentItem,
     ZoneParameters
-} from "seaport-types/src/lib/ConsiderationStructs.sol";
+} from "../seaport-types/src/lib/ConsiderationStructs.sol";
 
-import { ItemType, Side } from "seaport-types/src/lib/ConsiderationEnums.sol";
+import { ItemType, Side } from "../seaport-types/src/lib/ConsiderationEnums.sol";
 
 import {
     ConsiderationInterface
-} from "seaport-types/src/interfaces/ConsiderationInterface.sol";
+} from "../seaport-types/src/interfaces/ConsiderationInterface.sol";
 
 import {
     ContractOffererInterface
-} from "seaport-types/src/interfaces/ContractOffererInterface.sol";
+} from "../seaport-types/src/interfaces/ContractOffererInterface.sol";
 import { OffererZoneFailureReason } from "./OffererZoneFailureReason.sol";
 
 contract HashCalldataContractOfferer is ContractOffererInterface {

@@ -3,7 +3,7 @@ pragma solidity ^0.8.13;
 
 import {
     IERC721Receiver
-} from "seaport-types/src/interfaces/IERC721Receiver.sol";
+} from "../seaport-types/src/interfaces/IERC721Receiver.sol";
 
 contract ERC721ReceiverMock is IERC721Receiver {
     enum Error {

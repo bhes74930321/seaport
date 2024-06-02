@@ -16,9 +16,6 @@
     "ethers-eip712": "^0.2.0",
     "hardhat": "^2.21.0",
     "merkletreejs": "^0.3.9",
-    "seaport-core": "1.6.6",
-    "seaport-sol": "1.6.0",
-    "seaport-types": "1.6.3",
     "solady": "^0.0.84"
   },
   "devDependencies": {
@@ -84,6 +81,7 @@
     "build:nospec": "yarn clean; NO_SPECIALIZER=true hardhat compile --config ./hardhat.config.ts; yarn show:headroom;",
     "clean": "hardhat clean; hardhat clean --config ./hardhat-reference.config.ts; forge clean; rm -rf coverage coverage.json hh-cache hh-cache-ref",
     "test": "yarn clean; hardhat test --config ./hardhat.config.ts",
+    "test-my": "hardhat test --config ./hardhat.config.ts ./test/1my.advanced.spec.ts",
     "test:quick": "hardhat test --config ./hardhat.config.ts",
     "test:nospec": "NO_SPECIALIZER=true hardhat test --config ./hardhat.config.ts",
     "test:ref": "REFERENCE=true hardhat test --config ./hardhat-reference.config.ts",

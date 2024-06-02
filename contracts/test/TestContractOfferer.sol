@@ -5,20 +5,22 @@ import {
     ERC20Interface,
     ERC721Interface,
     ERC1155Interface
-} from "seaport-types/src/interfaces/AbridgedTokenInterfaces.sol";
+} from "../seaport-types/src/interfaces/AbridgedTokenInterfaces.sol";
 
 import {
     ContractOffererInterface
-} from "seaport-types/src/interfaces/ContractOffererInterface.sol";
+} from "../seaport-types/src/interfaces/ContractOffererInterface.sol";
 
 import { ERC165 } from "@openzeppelin/contracts/utils/introspection/ERC165.sol";
-import { ItemType } from "seaport-types/src/lib/ConsiderationEnums.sol";
+import { ItemType } from "../seaport-types/src/lib/ConsiderationEnums.sol";
 
 import {
     ReceivedItem,
     Schema,
     SpentItem
-} from "seaport-types/src/lib/ConsiderationStructs.sol";
+} from "../seaport-types/src/lib/ConsiderationStructs.sol";
+
+import "hardhat/console.sol";
 
 /**
  * @title TestContractOfferer
@@ -143,6 +145,10 @@ contract TestContractOfferer is ERC165, ContractOffererInterface {
 
             token.setApprovalForAll(_SEAPORT, true);
         }
+        console.log("===available===");
+        logSpentItem(available);
+        console.log("===required===");
+        logSpentItem(required);
 
         // Set storage variables.
         _available = available;
@@ -205,6 +211,7 @@ contract TestContractOfferer is ERC165, ContractOffererInterface {
                 amount: _required.amount,
                 recipient: payable(address(this))
             });
+            console.log("===recipient address===:", address(this));
         }
 
         // Update storage to reflect that the order has been fulfilled.
@@ -338,4 +345,29 @@ contract TestContractOfferer is ERC165, ContractOffererInterface {
 
         return ("TestContractOfferer", schemas);
     }
+
+    function logItemType(ItemType itemType) public pure {
+        if (itemType == ItemType.NATIVE) {
+            console.log("NATIVE");
+        } else if (itemType == ItemType.ERC20) {
+            console.log("ERC20");
+        } else if (itemType == ItemType.ERC721) {
+            console.log("ERC721");
+        } else if (itemType == ItemType.ERC1155) {
+            console.log("ERC1155");
+        } else if (itemType == ItemType.ERC721_WITH_CRITERIA) {
+            console.log("ERC721_WITH_CRITERIA");
+        } else if (itemType == ItemType.ERC1155_WITH_CRITERIA) {
+            console.log("ERC1155_WITH_CRITERIA");
+        }
+    }
+
+    function logSpentItem(SpentItem memory item) public pure {
+        console.log("=======================logSpentItem================");
+        logItemType(item.itemType);
+        console.log("token: %s", item.token);
+        console.log("identifier: %s", item.identifier);
+        console.log("amount: %s", item.amount);
+    }
+
 }
