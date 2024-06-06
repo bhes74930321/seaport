@@ -181,6 +181,7 @@ contract OrderValidator is Executor, ZoneInteraction {
     {
         // Retrieve the parameters for the order.
         OrderParameters memory orderParameters = advancedOrder.parameters;
+        //判断时间是否合法
         // Ensure current timestamp falls between order start time and end time.
         if (
             !_verifyTime(
@@ -195,6 +196,7 @@ contract OrderValidator is Executor, ZoneInteraction {
 
         // Read numerator and denominator from memory and place on the stack.
         // Note that overflowed values are masked.
+        //读取分子和分母
         assembly {
             numerator := and(
                 mload(add(advancedOrder, AdvancedOrder_numerator_offset)),
@@ -208,6 +210,7 @@ contract OrderValidator is Executor, ZoneInteraction {
         }
 
         // Declare variable for tracking the validity of the supplied fraction.
+        // 标记分子分母是否合法
         bool invalidFraction;
 
         // If the order is a contract order, return the generated order.
@@ -244,6 +247,7 @@ contract OrderValidator is Executor, ZoneInteraction {
         }
 
         // If attempting partial fill (n < d) check order type & ensure support.
+        // 如果尝试部分填充（n < d）检查订单类型并确保支持。
         if (
             _doesNotSupportPartialFills(
                 orderParameters.orderType,
@@ -256,6 +260,7 @@ contract OrderValidator is Executor, ZoneInteraction {
         }
 
         // Retrieve current counter & use it w/ parameters to derive order hash.
+        // 将订单的各个参数（EIP-712 类型哈希、offerHash、considerationHash、counter 和其他参数）编码成一段连续的内存区域，然后对这块区域进行哈希运算，得到订单的哈希值
         orderHash = _assertConsiderationLengthAndGetOrderHash(orderParameters);
 
         // Retrieve the order status using the derived order hash.
@@ -934,7 +939,7 @@ contract OrderValidator is Executor, ZoneInteraction {
         // The "full" order types are even, while "partial" order types are odd.
         // Bitwise and by 1 is equivalent to modulo by 2, but 2 gas cheaper. The
         // check is only necessary if numerator is less than denominator.
-        // "完整" 订单类型为偶数，而 "部分" 订单类型为奇数。
+        // "完整" 订单类型为偶数，而 "部分 partial" 订单类型为奇数。
         // 按位与 1 等效于模 2，但便宜 2 gas。 仅当分子小于分母时才需要检查。
         assembly {
             // Equivalent to `uint256(orderType) & 1 == 0`.

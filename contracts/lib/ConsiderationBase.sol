@@ -123,7 +123,7 @@ contract ConsiderationBase is
         bytes32 typehash = _EIP_712_DOMAIN_TYPEHASH;
         bytes32 nameHash = _NAME_HASH;
         bytes32 versionHash = _VERSION_HASH;
-
+        // TODO 为什么0x0-0x3f的内存没有被还原？
         // Leverage scratch space and other memory to perform an efficient hash.
         assembly {
             // Retrieve the free memory pointer; it will be replaced afterwards.

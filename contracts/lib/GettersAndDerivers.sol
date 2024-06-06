@@ -85,6 +85,7 @@ contract GettersAndDerivers is ConsiderationBase {
         bytes32 offerHash;
 
         // Read offer item EIP-712 typehash from runtime code & place on stack.
+        // OfferItem 结构体的 EIP-712 类型哈希值
         bytes32 typeHash = _OFFER_ITEM_TYPEHASH;
 
         // Utilize assembly so that memory regions can be reused across hashes.
@@ -93,14 +94,17 @@ contract GettersAndDerivers is ConsiderationBase {
             let hashArrPtr := mload(FreeMemoryPointerSlot)
 
             // Get the pointer to the offers array.
+            // 指针偏移0x40获取offers数组的指针
             let offerArrPtr := mload(
                 add(orderParameters, OrderParameters_offer_head_offset)
             )
 
             // Load the length.
+            // 读取offers数组的长度
             let offerLength := mload(offerArrPtr)
 
             // Set the pointer to the first offer's head.
+            // 偏移一个字，获取offers数组的第一个元素的指针
             offerArrPtr := add(offerArrPtr, OneWord)
 
             // Iterate over the offer items.
@@ -111,26 +115,36 @@ contract GettersAndDerivers is ConsiderationBase {
             } {
                 // Read the pointer to the offer data and subtract one word
                 // to get typeHash pointer.
+                // mload(offerArrPtr)读取offers数组的元素的指针，不是数据
+                // sub(mload(offerArrPtr), OneWord)获取offer数据的指针的前一个字节
                 let ptr := sub(mload(offerArrPtr), OneWord)
 
                 // Read the current value before the offer data.
+                // 保存offer数据的前一个字节的值
                 let value := mload(ptr)
 
                 // Write the type hash to the previous word.
+                // 将offer数据的前一个字节的值设置为typeHash
                 mstore(ptr, typeHash)
 
                 // Take the EIP712 hash and store it in the hash array.
+                // 计算offer数据的哈希值，并存储到hashArrPtr
+                // 即将_OFFER_ITEM_TYPEHASH OrderParameters中offer~endtime的数据进行哈希
                 mstore(hashArrPtr, keccak256(ptr, EIP712_OfferItem_size))
 
                 // Restore the previous word.
+                // 恢复offer数据的前一个字节的值
                 mstore(ptr, value)
 
                 // Increment the array pointers by one word.
+                // offerArrPtr指针偏移一个字，指向下一个offerItem 指针
                 offerArrPtr := add(offerArrPtr, OneWord)
+                // hashArrPtr指针偏移一个字，相当于hashArrPtr新增一个元素
                 hashArrPtr := add(hashArrPtr, OneWord)
             }
 
             // Derive the offer hash using the hashes of each item.
+            // 计算hashArrPtr数组的hash
             offerHash := keccak256(
                 mload(FreeMemoryPointerSlot),
                 shl(OneWordShift, offerLength)
@@ -220,6 +234,7 @@ contract GettersAndDerivers is ConsiderationBase {
             let offerDataPtr := mload(offerHeadPtr)
 
             // Store the offer hash at the retrieved memory location.
+            // 将之前计算好的 offerHash 写入 offerHeadPtr 位置，覆盖原始的 offer 数组数据指针
             mstore(offerHeadPtr, offerHash)
 
             // Retrieve the pointer for the consideration array head.
@@ -232,30 +247,37 @@ contract GettersAndDerivers is ConsiderationBase {
             let considerationDataPtr := mload(considerationHeadPtr)
 
             // Store the consideration hash at the retrieved memory location.
+            // 将之前计算好的 considerationHash 写入 considerationHeadPtr 位置，覆盖原始的 consideration 数组数据指针。
             mstore(considerationHeadPtr, considerationHash)
 
             // Retrieve the pointer for the counter.
+            // uint256 totalOriginalConsiderationItems; // 0x140
             let counterPtr := add(
                 orderParameters,
-                OrderParameters_counter_offset
+                OrderParameters_counter_offset  // 0x140
             )
 
             // Store the counter at the retrieved memory location.
+            // 将 counter 写入 counterPtr 位置，覆盖原始的 counter
             mstore(counterPtr, counter)
 
             // Derive the order hash using the full range of order parameters.
             orderHash := keccak256(typeHashPtr, EIP712_Order_size)
 
             // Restore the value previously held at typehash pointer location.
+            // 恢复 typeHashPtr 位置的原始值
             mstore(typeHashPtr, previousValue)
 
             // Restore offer data pointer at the offer head pointer location.
+            // 恢复 offerHeadPtr 位置的原始值,还原 offer 数组数据指针
             mstore(offerHeadPtr, offerDataPtr)
 
             // Restore consideration data pointer at the consideration head ptr.
+            // 恢复 considerationHeadPtr 位置的原始值，还原 consideration 数组数据指针
             mstore(considerationHeadPtr, considerationDataPtr)
 
             // Restore consideration item length at the counter pointer.
+            // 恢复 counterPtr 位置的原始值，还原 counter
             mstore(counterPtr, originalConsiderationLength)
         }
     }

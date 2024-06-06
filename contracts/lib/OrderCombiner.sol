@@ -249,6 +249,7 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                  * 1000011100100000000110110 1 000001 fulfillAvailableAdvanced
                  *                           ^ 7th bit
                  */
+                 //判断被调用方法是不是 fulfillAvailableAdvanced或者 fulfillAvailableOrders
                 invalidNativeOfferItemErrorBuffer := and(
                     NonMatchSelector_MagicMask,
                     calldataload(0)
@@ -263,7 +264,8 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                 orderHashes = new bytes32[](totalOrders);
 
                 // Determine the memory offset to terminate on during loops.
-                // 在内存中占据 totalOrders * 32 字节的空间
+                // advancedOrders在内存中占据 totalOrders + 1 * 32 字节的空间
+                // totalOrders + 1是因为arr头部有一个长度字段
                 terminalMemoryOffset = (totalOrders + 1) << OneWordShift;
             }
 
@@ -273,6 +275,7 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                 bool isNonContract;
 
                 // Iterate over each order.
+                // 遍历advancedOrders
                 for (
                     uint256 i = OneWord;
                     i < terminalMemoryOffset;
@@ -280,6 +283,8 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                 ) {
                     // Retrieve order via pointer to bypass out-of-range check &
                     // cast function to avoid additional memory allocation.
+                    // LowLevelHelpers.sol _getReadAdvancedOrderByOffset()
+                    // 读取advencedOrders数组中的一个元素
                     AdvancedOrder memory advancedOrder = (
                         _getReadAdvancedOrderByOffset()(advancedOrders, i)
                     );
