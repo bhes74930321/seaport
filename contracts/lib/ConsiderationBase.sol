@@ -115,6 +115,7 @@ contract ConsiderationBase is
      *
      * @return domainSeparator The derived domain separator.
      */
+     //hash(_EIP_712_DOMAIN_TYPEHASH + _NAME_HASH + _VERSION_HASH + _CHAIN_ID + address(this))
     function _deriveDomainSeparator()
         internal
         view

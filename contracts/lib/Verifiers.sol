@@ -104,9 +104,11 @@ contract Verifiers is Assertions, SignatureVerification {
         }
 
         // Derive the EIP-712 domain separator.
+        // eip712DomainSeparator
         bytes32 domainSeparator = _domainSeparator();
 
         // Derive original EIP-712 digest using domain separator and order hash.
+        // hash(domainSeparator + orderHash)
         bytes32 originalDigest = _deriveEIP712Digest(
             domainSeparator,
             orderHash
