@@ -1,0 +1,3588 @@
+----- Begin of events.ts -----
+import type { ContractTransaction } from "ethers";
+import type { Interface } from "ethers/lib/utils";
+
+type DecodedTransactionEvent = {
+  eventName: string;
+  data: { [key: string | number]: string | number | boolean };
+};
+
+type EventDecoder = {
+  eventName: string;
+  contract: { interface: Interface };
+};
+
+export async function decodeEvents(
+  tx: ContractTransaction,
+  eventDecoders: EventDecoder[]
+): Promise<DecodedTransactionEvent[]> {
+  const receipt = await tx.wait();
+  const events = receipt.events;
+  if (events == null) {
+    return [];
+  }
+
+  const decodedEvents = events
+    .map((event) => {
+      for (const decoder of eventDecoders) {
+        // Attempt to decode each event as decoder.eventName.
+        // If the event is not successfully decoded (e.g. if the
+        // event is not an event with name decoder.eventName),
+        // the catch will be hit.
+        try {
+          const result = decoder.contract.interface.decodeEventLog(
+            decoder.eventName,
+            event.data,
+            event.topics
+          );
+          return {
+            eventName: decoder.eventName,
+            data: result,
+          } as DecodedTransactionEvent;
+        } catch {}
+      }
+      // Event was not decoded by any decoder so return null.
+      return null;
+    })
+    // Filter out all nulls so that at the end we are left with
+    // only successfully decoded events.
+    .filter(Boolean);
+  return decodedEvents as DecodedTransactionEvent[];
+}
+----- End of events.ts -----
+
+----- Begin of reports/comment-table.ts -----
+import chalk from "chalk";
+
+const err = chalk.bold.red;
+const warn = chalk.hex("#FFA500");
+const info = chalk.blue;
+const success = chalk.green;
+
+export function diffPctString(
+  newValue: number,
+  oldValue: number,
+  warnOnIncrease?: boolean,
+  diffOnly?: boolean
+): string {
+  if ([newValue, oldValue].every(isNaN)) {
+    return warn("null");
+  }
+  const diff = newValue - oldValue;
+
+  if (diff === 0) return info(newValue.toString());
+  const pct = +((100 * diff) / oldValue).toFixed(2);
+  const prefix = pct > 0 ? "+" : "";
+  const color = diff > 0 ? (warnOnIncrease ? warn : err) : success;
+  const value = diffOnly ? diff : newValue;
+  return `${value} (${color(`${prefix}${pct}%`)})`;
+}
+// eslint-disable-next-line no-control-regex
+const stripANSI = (str: string) => str.replace(/\u001b\[.*?m/g, "");
+
+export function getColumnSizesAndAlignments(
+  rows: string[][],
+  padding = 0
+): Array<[number, boolean]> {
+  const sizesAndAlignments: Array<[number, boolean]> = [];
+  const numColumns = rows[0].length;
+  for (let i = 0; i < numColumns; i++) {
+    const entries = rows.map((row) => stripANSI(row[i]));
+    const maxSize = Math.max(...entries.map((e) => e.length));
+    const alignLeft = entries.slice(1).some((e) => !!e.match(/[a-zA-Z]/g));
+    sizesAndAlignments.push([maxSize + padding, alignLeft]);
+  }
+  return sizesAndAlignments;
+}
+
+const padColumn = (
+  col: string,
+  size: number,
+  padWith: string,
+  alignLeft: boolean
+) => {
+  const padSize = Math.max(0, size - stripANSI(col).length);
+  const padding = padWith.repeat(padSize);
+  if (alignLeft) return `${col}${padding}`;
+  return `${padding}${col}`;
+};
+
+export const toCommentTable = (rows: string[][]): string[] => {
+  const sizesAndAlignments = getColumnSizesAndAlignments(rows);
+  rows.forEach((row) => {
+    row.forEach((col, c) => {
+      const [size, alignLeft] = sizesAndAlignments[c];
+      row[c] = padColumn(col, size, " ", alignLeft);
+    });
+  });
+
+  const completeRows = rows.map((row) => `| ${row.join(" | ")} |`);
+  const rowSeparator = `==${sizesAndAlignments
+    .map(([size]) => "=".repeat(size))
+    .join("===")}==`;
+  completeRows.splice(1, 0, rowSeparator);
+  completeRows.unshift(rowSeparator);
+  completeRows.push(rowSeparator);
+  return completeRows;
+};
+----- End of reports/comment-table.ts -----
+
+----- Begin of reports/report_parser.ts -----
+import fs from "fs";
+import path from "path";
+
+import { diffPctString, toCommentTable } from "./comment-table";
+
+type GasReport = {
+  contract: string;
+  method: string;
+  min: number;
+  max: number;
+  avg: number;
+  calls: number;
+};
+
+function parseReport(text: string): GasReport[] {
+  const lines = text
+    .split("\n")
+    .slice(6)
+    .filter((ln) => ln.indexOf("·") !== 0);
+  const rows = lines
+    .map((ln) => ln.replace(/\|/g, "").replace(/\s/g, "").split("·"))
+    .filter((row) => row.length === 7)
+    .map(([contract, method, min, max, avg, calls]) => ({
+      contract,
+      method,
+      min: +min,
+      max: +max,
+      avg: +avg,
+      calls: +calls,
+    }));
+  return rows;
+}
+
+function parseReportFile(fileName: string, write?: boolean) {
+  const text = fs.readFileSync(path.join(__dirname, fileName), "utf8");
+  const report = parseReport(text);
+  if (write) {
+    fs.writeFileSync(
+      path.join(__dirname, fileName.replace(".md", ".json")),
+      JSON.stringify(report, null, 2)
+    );
+  }
+  return report;
+}
+
+export function compareReports(report1: GasReport[], report2: GasReport[]) {
+  const rows: string[][] = [];
+  rows.push([`contract`, `method`, `min`, `max`, `avg`]);
+  report1.forEach((r1, i) => {
+    if (r1.contract !== "Seaport") return;
+    const r2 = report2[i];
+    if (r1.contract !== r2.contract || r1.method !== r2.method) {
+      throw new Error("contract and method for comparison do not match");
+    }
+    rows.push([
+      r1.contract,
+      r1.method,
+      diffPctString(r2.min, r1.min, false, true),
+      diffPctString(r2.max, r1.max, false, true),
+      diffPctString(r2.avg, r1.avg, false, true),
+    ]);
+  });
+  console.log(toCommentTable(rows).join("\n"));
+}
+
+export function compareReportFiles(
+  name1: string,
+  name2: string,
+  write?: boolean
+) {
+  const report1 = parseReportFile(name1, write);
+  const report2 = parseReportFile(name2, write);
+  compareReports(report1, report2);
+}
+----- End of reports/report_parser.ts -----
+
+----- Begin of contracts.ts -----
+import { ethers } from "hardhat";
+
+import type { JsonRpcSigner } from "@ethersproject/providers";
+import type { Contract, Wallet } from "ethers";
+
+import "dotenv/config";
+
+export const deployContract = async <C extends Contract>(
+  name: string,
+  signer?: JsonRpcSigner | Wallet,
+  ...args: any[]
+): Promise<C> => {
+  if (!signer) {
+    signer = await ethers.provider.getSigner(0);
+  }
+  const references = new Map<string, string>([
+    ["Consideration", "ReferenceConsideration"],
+    ["Conduit", "ReferenceConduit"],
+    ["ConduitController", "ReferenceConduitController"],
+  ]);
+
+  const nameWithReference =
+    process.env.REFERENCE && references.has(name)
+      ? references.get(name) ?? name
+      : name;
+
+  const f = await ethers.getContractFactory(nameWithReference, signer);
+  const c = await f.deploy(...args);
+  return c as C;
+};
+----- End of contracts.ts -----
+
+----- Begin of seeded-rng.js -----
+/* eslint-disable new-cap */
+/* eslint-disable no-control-regex */
+/*
+ * random-seed
+ * https://github.com/skratchdot/random-seed
+ *
+ * This code was originally written by Steve Gibson and can be found here:
+ *
+ * https://www.grc.com/otg/uheprng.htm
+ *
+ * It was slightly modified for use in node, to pass jshint, and a few additional
+ * helper functions were added.
+ *
+ * Copyright (c) 2013 skratchdot
+ * Dual Licensed under the MIT license and the original GRC copyright/license
+ * included below.
+ */
+/*	============================================================================
+									Gibson Research Corporation
+				UHEPRNG - Ultra High Entropy Pseudo-Random Number Generator
+	============================================================================
+	LICENSE AND COPYRIGHT:  THIS CODE IS HEREBY RELEASED INTO THE PUBLIC DOMAIN
+	Gibson Research Corporation releases and disclaims ALL RIGHTS AND TITLE IN
+	THIS CODE OR ANY DERIVATIVES. Anyone may be freely use it for any purpose.
+	============================================================================
+	This is GRC's cryptographically strong PRNG (pseudo-random number generator)
+	for JavaScript. It is driven by 1536 bits of entropy, stored in an array of
+	48, 32-bit JavaScript variables.  Since many applications of this generator,
+	including ours with the "Off The Grid" Latin Square generator, may require
+	the deterministic re-generation of a sequence of PRNs, this PRNG's initial
+	entropic state can be read and written as a static whole, and incrementally
+	evolved by pouring new source entropy into the generator's internal state.
+	----------------------------------------------------------------------------
+	ENDLESS THANKS are due Johannes Baagoe for his careful development of highly
+	robust JavaScript implementations of JS PRNGs.  This work was based upon his
+	JavaScript "Alea" PRNG which is based upon the extremely robust Multiply-
+	With-Carry (MWC) PRNG invented by George Marsaglia. MWC Algorithm References:
+	http://www.GRC.com/otg/Marsaglia_PRNGs.pdf
+	http://www.GRC.com/otg/Marsaglia_MWC_Generators.pdf
+	----------------------------------------------------------------------------
+	The quality of this algorithm's pseudo-random numbers have been verified by
+	multiple independent researchers. It handily passes the fermilab.ch tests as
+	well as the "diehard" and "dieharder" test suites.  For individuals wishing
+	to further verify the quality of this algorithm's pseudo-random numbers, a
+	256-megabyte file of this algorithm's output may be downloaded from GRC.com,
+	and a Microsoft Windows scripting host (WSH) version of this algorithm may be
+	downloaded and run from the Windows command prompt to generate unique files
+	of any size:
+	The Fermilab "ENT" tests: http://fourmilab.ch/random/
+	The 256-megabyte sample PRN file at GRC: https://www.GRC.com/otg/uheprng.bin
+	The Windows scripting host version: https://www.GRC.com/otg/wsh-uheprng.js
+	----------------------------------------------------------------------------
+	Qualifying MWC multipliers are: 187884, 686118, 898134, 1104375, 1250205,
+	1460910 and 1768863. (Use the largest one that's < 2^21)
+	============================================================================ */
+"use strict";
+const stringify = JSON.stringify;
+
+/*	============================================================================
+  This is based upon Johannes Baagoe's carefully designed and efficient hash
+  function for use with JavaScript.  It has a proven "avalanche" effect such
+  that every bit of the input affects every bit of the output 50% of the time,
+  which is good.	See: http://baagoe.com/en/RandomMusings/hash/avalanche.xhtml
+  ============================================================================
+  */
+const Mash = function () {
+  let n = 0xefc8249d;
+  const mash = function (data) {
+    if (data) {
+      data = data.toString();
+      for (let i = 0; i < data.length; i++) {
+        n += data.charCodeAt(i);
+        let h = 0.02519603282416938 * n;
+        n = h >>> 0;
+        h -= n;
+        h *= n;
+        n = h >>> 0;
+        h -= n;
+        n += h * 0x100000000; // 2^32
+      }
+      return (n >>> 0) * 2.3283064365386963e-10; // 2^-32
+    } else {
+      n = 0xefc8249d;
+    }
+  };
+  return mash;
+};
+
+const uheprng = function (seed) {
+  return (function () {
+    const o = 48; // set the 'order' number of ENTROPY-holding 32-bit values
+    let c = 1; // init the 'carry' used by the multiply-with-carry (MWC) algorithm
+    let p = o; // init the 'phase' (max-1) of the intermediate variable pointer
+    const s = new Array(o); // declare our intermediate variables array
+    let i; // general purpose local
+    let j; // general purpose local
+    let k = 0; // general purpose local
+
+    // when our "uheprng" is initially invoked our PRNG state is initialized from the
+    // browser's own local PRNG. This is okay since although its generator might not
+    // be wonderful, it's useful for establishing large startup entropy for our usage.
+    let mash = new Mash(); // get a pointer to our high-performance "Mash" hash
+
+    // fill the array with initial mash hash values
+    for (i = 0; i < o; i++) {
+      s[i] = mash(Math.random());
+    }
+
+    // this PRIVATE (internal access only) function is the heart of the multiply-with-carry
+    // (MWC) PRNG algorithm. When called it returns a pseudo-random number in the form of a
+    // 32-bit JavaScript fraction (0.0 to <1.0) it is a PRIVATE function used by the default
+    // [0-1] return function, and by the random 'string(n)' function which returns 'n'
+    // characters from 33 to 126.
+    const rawprng = function () {
+      if (++p >= o) {
+        p = 0;
+      }
+      const t = 1768863 * s[p] + c * 2.3283064365386963e-10; // 2^-32
+      return (s[p] = t - (c = t | 0));
+    };
+
+    // this EXPORTED function is the default function returned by this library.
+    // The values returned are integers in the range from 0 to range-1. First
+    // obtain two 32-bit fractions (from rawprng) to synthesize a single high
+    // resolution 53-bit prng (0 to <1), then we multiply this by the caller's
+    // "range" param and take the "floor" to return a equally probable integer.
+    const random = function (range) {
+      return Math.floor(
+        range *
+          (rawprng() + ((rawprng() * 0x200000) | 0) * 1.1102230246251565e-16)
+      ); // 2^-53
+    };
+
+    // this EXPORTED function 'string(n)' returns a pseudo-random string of
+    // 'n' printable characters ranging from chr(33) to chr(126) inclusive.
+    random.string = function (count) {
+      let i;
+      let s = "";
+      for (i = 0; i < count; i++) {
+        s += String.fromCharCode(33 + random(94));
+      }
+      return s;
+    };
+
+    // this PRIVATE "hash" function is used to evolve the generator's internal
+    // entropy state. It is also called by the EXPORTED addEntropy() function
+    // which is used to pour entropy into the PRNG.
+    const hash = function () {
+      const args = Array.prototype.slice.call(arguments);
+      for (i = 0; i < args.length; i++) {
+        for (j = 0; j < o; j++) {
+          s[j] -= mash(args[i]);
+          if (s[j] < 0) {
+            s[j] += 1;
+          }
+        }
+      }
+    };
+
+    // this EXPORTED "clean string" function removes leading and trailing spaces and non-printing
+    // control characters, including any embedded carriage-return (CR) and line-feed (LF) characters,
+    // from any string it is handed. this is also used by the 'hashstring' function (below) to help
+    // users always obtain the same EFFECTIVE uheprng seeding key.
+    random.cleanString = function (inStr) {
+      inStr = inStr.replace(/(^\s*)|(\s*$)/gi, ""); // remove any/all leading spaces
+      inStr = inStr.replace(/[\x00-\x1F]/gi, ""); // remove any/all control characters
+      inStr = inStr.replace(/\n /, "\n"); // remove any/all trailing spaces
+      return inStr; // return the cleaned up result
+    };
+
+    // this EXPORTED "hash string" function hashes the provided character string after first removing
+    // any leading or trailing spaces and ignoring any embedded carriage returns (CR) or Line Feeds (LF)
+    random.hashString = function (inStr) {
+      inStr = random.cleanString(inStr);
+      mash(inStr); // use the string to evolve the 'mash' state
+      for (i = 0; i < inStr.length; i++) {
+        // scan through the characters in our string
+        k = inStr.charCodeAt(i); // get the character code at the location
+        for (j = 0; j < o; j++) {
+          //	"mash" it into the UHEPRNG state
+          s[j] -= mash(k);
+          if (s[j] < 0) {
+            s[j] += 1;
+          }
+        }
+      }
+    };
+
+    // this EXPORTED function allows you to seed the random generator.
+    random.seed = function (seed) {
+      if (typeof seed === "undefined" || seed === null) {
+        seed = Math.random();
+      }
+      if (typeof seed !== "string") {
+        seed = stringify(seed, function (key, value) {
+          if (typeof value === "function") {
+            return value.toString();
+          }
+          return value;
+        });
+      }
+      random.initState();
+      random.hashString(seed);
+    };
+
+    // this handy exported function is used to add entropy to our uheprng at any time
+    random.addEntropy = function (/* accept zero or more arguments */) {
+      const args = [];
+      for (i = 0; i < arguments.length; i++) {
+        args.push(arguments[i]);
+      }
+      hash(k++ + new Date().getTime() + args.join("") + Math.random());
+    };
+
+    // if we want to provide a deterministic startup context for our PRNG,
+    // but without directly setting the internal state variables, this allows
+    // us to initialize the mash hash and PRNG's internal state before providing
+    // some hashing input
+    random.initState = function () {
+      mash(); // pass a null arg to force mash hash to init
+      for (i = 0; i < o; i++) {
+        s[i] = mash(" "); // fill the array with initial mash hash values
+      }
+      c = 1; // init our multiply-with-carry carry
+      p = o; // init our phase
+    };
+
+    // we use this (optional) exported function to signal the JavaScript interpreter
+    // that we're finished using the "Mash" hash function so that it can free up the
+    // local "instance variables" is will have been maintaining.  It's not strictly
+    // necessary, of course, but it's good JavaScript citizenship.
+    random.done = function () {
+      mash = null;
+    };
+
+    // if we called "uheprng" with a seed value, then execute random.seed() before returning
+    if (typeof seed !== "undefined") {
+      random.seed(seed);
+    }
+
+    // Returns a random integer between 0 (inclusive) and range (exclusive)
+    random.range = function (range) {
+      return random(range);
+    };
+
+    // Returns a random float between 0 (inclusive) and 1 (exclusive)
+    random.random = function () {
+      return random(Number.MAX_VALUE - 1) / Number.MAX_VALUE;
+    };
+
+    random.randomBytes = function (bytes = 1) {
+      return [...Array(bytes * 2)].map(() => random(16).toString(16)).join("");
+    };
+
+    // Returns a random float between min (inclusive) and max (exclusive)
+    random.floatBetween = function (min, max) {
+      return random.random() * (max - min) + min;
+    };
+
+    // Returns a random integer between min (inclusive) and max (inclusive)
+    random.intBetween = function (min, max) {
+      return Math.floor(random.random() * (max - min + 1)) + min;
+    };
+
+    // when our main outer "uheprng" function is called, after setting up our
+    // initial variables and entropic state, we return an "instance pointer"
+    // to the internal anonymous function which can then be used to access
+    // the uheprng's various exported functions.  As with the ".done" function
+    // above, we should set the returned value to 'null' once we're finished
+    // using any of these functions.
+    return random;
+  })();
+};
+
+// Modification for use in node:
+uheprng.create = function (seed) {
+  return new uheprng(seed);
+};
+module.exports = uheprng;
+----- End of seeded-rng.js -----
+
+----- Begin of criteria.ts -----
+import { ethers } from "ethers";
+
+const { keccak256 } = ethers.utils;
+
+type BufferElementPositionIndex = { [key: string]: number };
+
+export const merkleTree = (tokenIds: ethers.BigNumber[]) => {
+  const elements = tokenIds
+    .map((tokenId) =>
+      Buffer.from(tokenId.toHexString().slice(2).padStart(64, "0"), "hex")
+    )
+    .sort(Buffer.compare)
+    .filter((el, idx, arr) => {
+      return idx === 0 || !arr[idx - 1].equals(el);
+    });
+
+  const bufferElementPositionIndex = elements.reduce(
+    (memo: BufferElementPositionIndex, el, index) => {
+      memo["0x" + el.toString("hex")] = index;
+      return memo;
+    },
+    {}
+  );
+
+  // Create layers
+  const layers = getLayers(elements);
+
+  const root = "0x" + layers[layers.length - 1][0].toString("hex");
+
+  const proofs = Object.fromEntries(
+    elements.map((el) => [
+      ethers.BigNumber.from(el).toString(),
+      getHexProof(el, bufferElementPositionIndex, layers),
+    ])
+  );
+
+  const maxProofLength = Math.max(
+    ...Object.values(proofs).map((i) => i.length)
+  );
+
+  return {
+    root,
+    proofs,
+    maxProofLength,
+  };
+};
+
+const getLayers = (elements: Buffer[]) => {
+  if (elements.length === 0) {
+    throw new Error("empty tree");
+  }
+
+  const layers = [];
+  layers.push(elements.map((el) => Buffer.from(keccak256(el).slice(2), "hex")));
+
+  // Get next layer until we reach the root
+  while (layers[layers.length - 1].length > 1) {
+    layers.push(getNextLayer(layers[layers.length - 1]));
+  }
+
+  return layers;
+};
+
+const getNextLayer = (elements: Buffer[]) => {
+  return elements.reduce((layer: Buffer[], el, idx, arr) => {
+    if (idx % 2 === 0) {
+      // Hash the current element with its pair element
+      layer.push(combinedHash(el, arr[idx + 1]));
+    }
+
+    return layer;
+  }, []);
+};
+
+const combinedHash = (first: Buffer, second: Buffer) => {
+  if (!first) {
+    return second;
+  }
+  if (!second) {
+    return first;
+  }
+
+  return Buffer.from(
+    keccak256(Buffer.concat([first, second].sort(Buffer.compare))).slice(2),
+    "hex"
+  );
+};
+
+const getHexProof = (
+  el: Buffer,
+  bufferElementPositionIndex: BufferElementPositionIndex,
+  layers: Buffer[][]
+) => {
+  let idx = bufferElementPositionIndex["0x" + el.toString("hex")];
+
+  if (typeof idx !== "number") {
+    throw new Error("Element does not exist in Merkle tree");
+  }
+
+  const proofBuffer = layers.reduce((proof: Buffer[], layer) => {
+    const pairIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
+    const pairElement = pairIdx < layer.length ? layer[pairIdx] : null;
+
+    if (pairElement) {
+      proof.push(pairElement);
+    }
+
+    idx = Math.floor(idx / 2);
+
+    return proof;
+  }, []);
+
+  return proofBuffer.map((el) => "0x" + el.toString("hex"));
+};
+----- End of criteria.ts -----
+
+----- Begin of faucet.ts -----
+import { parseEther } from "@ethersproject/units";
+import { ethers } from "hardhat";
+
+import { randomHex } from "./encoding";
+
+import type { JsonRpcProvider } from "@ethersproject/providers";
+
+const TEN_THOUSAND_ETH = parseEther("10000").toHexString().replace("0x0", "0x");
+
+export const faucet = async (address: string, provider: JsonRpcProvider) => {
+  await provider.send("hardhat_setBalance", [address, TEN_THOUSAND_ETH]);
+};
+
+export const getWalletWithEther = async () => {
+  const wallet = new ethers.Wallet(randomHex(32), ethers.provider);
+  await faucet(wallet.address, ethers.provider);
+  return wallet;
+};
+----- End of faucet.ts -----
+
+----- Begin of types.ts -----
+import type { BigNumber } from "ethers";
+
+export type AdditionalRecipient = {
+  amount: BigNumber;
+  recipient: string;
+};
+
+export type FulfillmentComponent = {
+  orderIndex: number;
+  itemIndex: number;
+};
+
+export type Fulfillment = {
+  offerComponents: FulfillmentComponent[];
+  considerationComponents: FulfillmentComponent[];
+};
+
+export type CriteriaResolver = {
+  orderIndex: number;
+  side: 0 | 1;
+  index: number;
+  identifier: BigNumber;
+  criteriaProof: string[];
+};
+
+export type BasicOrderParameters = {
+  considerationToken: string;
+  considerationIdentifier: BigNumber;
+  considerationAmount: BigNumber;
+  offerer: string;
+  zone: string;
+  offerToken: string;
+  offerIdentifier: BigNumber;
+  offerAmount: BigNumber;
+  basicOrderType: number;
+  startTime: string | BigNumber | number;
+  endTime: string | BigNumber | number;
+  zoneHash: string;
+  salt: string;
+  offererConduitKey: string;
+  fulfillerConduitKey: string;
+  totalOriginalAdditionalRecipients: BigNumber;
+  additionalRecipients: AdditionalRecipient[];
+  signature: string;
+};
+
+export type OfferItem = {
+  itemType: number;
+  token: string;
+  identifierOrCriteria: BigNumber;
+  startAmount: BigNumber;
+  endAmount: BigNumber;
+};
+export type ConsiderationItem = {
+  itemType: number;
+  token: string;
+  identifierOrCriteria: BigNumber;
+  startAmount: BigNumber;
+  endAmount: BigNumber;
+  recipient: string;
+};
+
+export type OrderParameters = {
+  offerer: string;
+  zone: string;
+  offer: OfferItem[];
+  consideration: ConsiderationItem[];
+  orderType: number;
+  startTime: string | BigNumber | number;
+  endTime: string | BigNumber | number;
+  zoneHash: string;
+  salt: string;
+  conduitKey: string;
+  totalOriginalConsiderationItems: string | BigNumber | number;
+};
+
+export type OrderComponents = Omit<
+  OrderParameters,
+  "totalOriginalConsiderationItems"
+> & {
+  counter: BigNumber;
+};
+
+export type Order = {
+  parameters: OrderParameters;
+  signature: string;
+};
+
+export type AdvancedOrder = {
+  parameters: OrderParameters;
+  numerator: string | BigNumber | number;
+  denominator: string | BigNumber | number;
+  signature: string;
+  extraData: string;
+};
+
+export type BulkOrder = {
+  tree: Array<Array<Array<Array<Array<Array<Array<OrderComponents>>>>>>>;
+};
+----- End of types.ts -----
+
+----- Begin of helpers.ts -----
+import { ethers } from "ethers";
+
+import { randomBN } from "./encoding";
+
+import type {
+  AdvancedOrder,
+  CriteriaResolver,
+  Fulfillment,
+  Order,
+} from "./types";
+
+export const VERSION = `1.6${process.env.REFERENCE ? "-reference" : ""}`;
+
+export const minRandom = (min: ethers.BigNumberish) => randomBN(10).add(min);
+
+export const getCustomRevertSelector = (customErrorString: string) =>
+  ethers.utils
+    .keccak256(ethers.utils.toUtf8Bytes(customErrorString))
+    .slice(0, 10);
+
+export const simulateMatchOrders = async (
+  marketplaceContract: ethers.Contract,
+  orders: Order[],
+  fulfillments: Fulfillment[],
+  caller: ethers.Wallet,
+  value: ethers.BigNumberish
+) =>
+  marketplaceContract
+    .connect(caller)
+    .callStatic.matchOrders(orders, fulfillments, {
+      value,
+    });
+
+export const simulateAdvancedMatchOrders = async (
+  marketplaceContract: ethers.Contract,
+  orders: AdvancedOrder[],
+  criteriaResolvers: CriteriaResolver[],
+  fulfillments: Fulfillment[],
+  caller: ethers.Wallet,
+  value: ethers.BigNumberish,
+  recipient: string = ethers.constants.AddressZero
+) =>
+  marketplaceContract
+    .connect(caller)
+    .callStatic.matchAdvancedOrders(
+      orders,
+      criteriaResolvers,
+      fulfillments,
+      recipient,
+      {
+        value,
+      }
+    );
+----- End of helpers.ts -----
+
+----- Begin of fixtures/tokens.ts -----
+import { expect } from "chai";
+import { ethers } from "hardhat";
+
+import { deployContract } from "../contracts";
+import {
+  getOfferOrConsiderationItem,
+  random128,
+  randomBN,
+  toBN,
+} from "../encoding";
+
+import type {
+  TestERC1155,
+  TestERC20,
+  TestERC721,
+} from "../../../typechain-types";
+import type { JsonRpcSigner } from "@ethersproject/providers";
+import type { BigNumber, BigNumberish, Contract, Wallet } from "ethers";
+
+export const fixtureERC20 = async (signer: JsonRpcSigner | Wallet) => {
+  const testERC20: TestERC20 = await deployContract("TestERC20", signer);
+
+  const mintAndApproveERC20 = async (
+    signer: Wallet,
+    spender: string,
+    tokenAmount: BigNumberish
+  ) => {
+    const amount = toBN(tokenAmount);
+    // Offerer mints ERC20
+    await testERC20.mint(signer.address, amount);
+
+    // Offerer approves marketplace contract to tokens
+    await expect(testERC20.connect(signer).approve(spender, amount))
+      .to.emit(testERC20, "Approval")
+      .withArgs(signer.address, spender, tokenAmount);
+  };
+
+  const getTestItem20 = (
+    startAmount: BigNumberish = 50,
+    endAmount: BigNumberish = 50,
+    recipient?: string,
+    token = testERC20.address
+  ) =>
+    getOfferOrConsiderationItem(1, token, 0, startAmount, endAmount, recipient);
+
+  return {
+    testERC20,
+    mintAndApproveERC20,
+    getTestItem20,
+  };
+};
+
+export const fixtureERC721 = async (signer: JsonRpcSigner | Wallet) => {
+  const testERC721: TestERC721 = await deployContract("TestERC721", signer);
+
+  const set721ApprovalForAll = (
+    signer: Wallet,
+    spender: string,
+    approved = true,
+    contract = testERC721
+  ) => {
+    return expect(contract.connect(signer).setApprovalForAll(spender, approved))
+      .to.emit(contract, "ApprovalForAll")
+      .withArgs(signer.address, spender, approved);
+  };
+
+  const mint721 = async (signer: Wallet | Contract, id?: BigNumberish) => {
+    const nftId = id ? toBN(id) : randomBN();
+    await testERC721.mint(signer.address, nftId);
+    return nftId;
+  };
+
+  const mint721s = async (signer: Wallet | Contract, count: number) => {
+    const arr = [];
+    for (let i = 0; i < count; i++) arr.push(await mint721(signer));
+    return arr;
+  };
+
+  const mintAndApprove721 = async (
+    signer: Wallet,
+    spender: string,
+    id?: BigNumberish
+  ) => {
+    await set721ApprovalForAll(signer, spender, true);
+    return mint721(signer, id);
+  };
+
+  const getTestItem721 = (
+    identifierOrCriteria: BigNumberish,
+    startAmount: BigNumberish = 1,
+    endAmount: BigNumberish = 1,
+    recipient?: string,
+    token = testERC721.address
+  ) =>
+    getOfferOrConsiderationItem(
+      2,
+      token,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+      recipient
+    );
+
+  const getTestItem721WithCriteria = (
+    identifierOrCriteria: BigNumberish,
+    startAmount: BigNumberish = 1,
+    endAmount: BigNumberish = 1,
+    recipient?: string
+  ) =>
+    getOfferOrConsiderationItem(
+      4,
+      testERC721.address,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+      recipient
+    );
+
+  return {
+    testERC721,
+    set721ApprovalForAll,
+    mint721,
+    mint721s,
+    mintAndApprove721,
+    getTestItem721,
+    getTestItem721WithCriteria,
+  };
+};
+
+export const fixtureERC1155 = async (signer: JsonRpcSigner | Wallet) => {
+  const testERC1155: TestERC1155 = await deployContract("TestERC1155", signer);
+
+  const set1155ApprovalForAll = (
+    signer: Wallet,
+    spender: string,
+    approved = true,
+    token = testERC1155
+  ) => {
+    return expect(token.connect(signer).setApprovalForAll(spender, approved))
+      .to.emit(token, "ApprovalForAll")
+      .withArgs(signer.address, spender, approved);
+  };
+
+  const mint1155 = async (
+    signer: Wallet,
+    multiplier = 1,
+    token = testERC1155,
+    id?: BigNumberish,
+    amt?: BigNumberish
+  ) => {
+    const nftId = id ? toBN(id) : randomBN();
+    const amount = amt ? toBN(amt) : toBN(randomBN(4));
+    await token.mint(signer.address, nftId, amount.mul(multiplier));
+    return { nftId, amount };
+  };
+
+  const mintAndApprove1155 = async (
+    signer: Wallet,
+    spender: string,
+    multiplier = 1,
+    id?: BigNumberish,
+    amt?: BigNumberish
+  ) => {
+    const { nftId, amount } = await mint1155(
+      signer,
+      multiplier,
+      testERC1155,
+      id,
+      amt
+    );
+    await set1155ApprovalForAll(signer, spender, true);
+    return { nftId, amount };
+  };
+
+  const getTestItem1155WithCriteria = (
+    identifierOrCriteria: BigNumberish,
+    startAmount: BigNumberish = 1,
+    endAmount: BigNumberish = 1,
+    recipient?: string
+  ) =>
+    getOfferOrConsiderationItem(
+      5,
+      testERC1155.address,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+      recipient
+    );
+
+  const getTestItem1155 = (
+    identifierOrCriteria: BigNumberish,
+    startAmount: BigNumberish,
+    endAmount: BigNumberish,
+    token = testERC1155.address,
+    recipient?: string
+  ) =>
+    getOfferOrConsiderationItem(
+      3,
+      token,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+      recipient
+    );
+
+  return {
+    testERC1155,
+    set1155ApprovalForAll,
+    mint1155,
+    mintAndApprove1155,
+    getTestItem1155WithCriteria,
+    getTestItem1155,
+  };
+};
+
+const minRandom = (min: number) => randomBN(10).add(min);
+
+export const tokensFixture = async (signer: JsonRpcSigner | Wallet) => {
+  const erc20 = await fixtureERC20(signer);
+  const erc721 = await fixtureERC721(signer);
+  const erc1155 = await fixtureERC1155(signer);
+  const { testERC1155: testERC1155Two } = await fixtureERC1155(signer);
+  const tokenByType = [
+    {
+      address: ethers.constants.AddressZero,
+    } as any, // ETH
+    erc20.testERC20,
+    erc721.testERC721,
+    erc1155.testERC1155,
+  ];
+  const createTransferWithApproval = async (
+    contract: TestERC20 | TestERC1155 | TestERC721,
+    receiver: Wallet,
+    itemType: 0 | 1 | 2 | 3 | 4 | 5,
+    approvalAddress: string,
+    from: string,
+    to: string
+  ) => {
+    let identifier: BigNumber = toBN(0);
+    let amount: BigNumber = toBN(0);
+    const token = contract.address;
+
+    switch (itemType) {
+      case 0:
+        break;
+      case 1: // ERC20
+        amount = minRandom(100);
+        await (contract as TestERC20).mint(receiver.address, amount);
+
+        // Receiver approves contract to transfer tokens
+        await expect(
+          (contract as TestERC20)
+            .connect(receiver)
+            .approve(approvalAddress, amount)
+        )
+          .to.emit(contract, "Approval")
+          .withArgs(receiver.address, approvalAddress, amount);
+        break;
+      case 2: // ERC721
+      case 4: // ERC721_WITH_CRITERIA
+        amount = toBN(1);
+        identifier = randomBN();
+        await (contract as TestERC721).mint(receiver.address, identifier);
+
+        // Receiver approves contract to transfer tokens
+        await erc721.set721ApprovalForAll(
+          receiver,
+          approvalAddress,
+          true,
+          contract as TestERC721
+        );
+        break;
+      case 3: // ERC1155
+      case 5: // ERC1155_WITH_CRITERIA
+        identifier = random128();
+        amount = minRandom(1);
+        await contract.mint(receiver.address, identifier, amount);
+
+        // Receiver approves contract to transfer tokens
+        await erc1155.set1155ApprovalForAll(
+          receiver,
+          approvalAddress,
+          true,
+          contract as TestERC1155
+        );
+        break;
+    }
+    return { itemType, token, from, to, identifier, amount };
+  };
+  return {
+    ...erc20,
+    ...erc721,
+    ...erc1155,
+    testERC1155Two,
+    tokenByType,
+    createTransferWithApproval,
+  };
+};
+----- End of fixtures/tokens.ts -----
+
+----- Begin of fixtures/index.ts -----
+import { expect } from "chai";
+import { Contract /* , constants */ } from "ethers";
+import { ethers } from "hardhat";
+
+import { deployContract } from "../contracts";
+import { toBN } from "../encoding";
+
+import { conduitFixture } from "./conduit";
+import { create2FactoryFixture } from "./create2";
+import { marketplaceFixture } from "./marketplace";
+import { tokensFixture } from "./tokens";
+
+import type { Reenterer } from "../../../typechain-types";
+import type {
+  AdvancedOrder,
+  ConsiderationItem,
+  CriteriaResolver,
+  OfferItem,
+} from "../types";
+import type {
+  BigNumber,
+  BigNumberish,
+  ContractReceipt,
+  ContractTransaction,
+  Wallet,
+} from "ethers";
+
+export { conduitFixture } from "./conduit";
+export {
+  fixtureERC20,
+  fixtureERC721,
+  fixtureERC1155,
+  tokensFixture,
+} from "./tokens";
+
+const { provider } = ethers;
+
+export const seaportFixture = async (owner: Wallet) => {
+  const EIP1271WalletFactory = await ethers.getContractFactory("EIP1271Wallet");
+  const reenterer = await deployContract<Reenterer>("Reenterer", owner);
+  const { chainId } = await provider.getNetwork();
+  const create2Factory = await create2FactoryFixture(owner);
+  const {
+    conduitController,
+    conduitImplementation,
+    conduitKeyOne,
+    conduitOne,
+    getTransferSender,
+    deployNewConduit,
+  } = await conduitFixture(create2Factory, owner);
+
+  const {
+    testERC20,
+    mintAndApproveERC20,
+    getTestItem20,
+    testERC721,
+    set721ApprovalForAll,
+    mint721,
+    mint721s,
+    mintAndApprove721,
+    getTestItem721,
+    getTestItem721WithCriteria,
+    testERC1155,
+    set1155ApprovalForAll,
+    mint1155,
+    mintAndApprove1155,
+    getTestItem1155WithCriteria,
+    getTestItem1155,
+    testERC1155Two,
+    tokenByType,
+    createTransferWithApproval,
+  } = await tokensFixture(owner as any);
+
+  const {
+    marketplaceContract,
+    directMarketplaceContract,
+    stubZone,
+    postExecutionZone,
+    invalidContractOfferer,
+    invalidContractOffererRatifyOrder,
+    domainData,
+    signOrder,
+    signBulkOrder,
+    createOrder,
+    createMirrorBuyNowOrder,
+    createMirrorAcceptOfferOrder,
+  } = await marketplaceFixture(
+    create2Factory,
+    conduitController,
+    conduitOne,
+    chainId,
+    owner
+  );
+
+  const withBalanceChecks = async (
+    ordersArray: AdvancedOrder[], // TODO: include order statuses to account for partial fills
+    additionalPayouts: 0 | BigNumber,
+    criteriaResolvers: CriteriaResolver[] = [],
+    fn: () => Promise<ContractReceipt>,
+    multiplier = 1
+  ) => {
+    const ordersClone: AdvancedOrder[] = JSON.parse(
+      JSON.stringify(ordersArray as any)
+    ) as any;
+    for (const [i, order] of Object.entries(ordersClone) as any as [
+      number,
+      AdvancedOrder
+    ][]) {
+      order.parameters.startTime = ordersArray[i].parameters.startTime;
+      order.parameters.endTime = ordersArray[i].parameters.endTime;
+
+      for (const [j, offerItem] of Object.entries(
+        order.parameters.offer
+      ) as any) {
+        offerItem.startAmount = ordersArray[i].parameters.offer[j].startAmount;
+        offerItem.endAmount = ordersArray[i].parameters.offer[j].endAmount;
+      }
+
+      for (const [j, considerationItem] of Object.entries(
+        order.parameters.consideration
+      ) as any) {
+        considerationItem.startAmount =
+          ordersArray[i].parameters.consideration[j].startAmount;
+        considerationItem.endAmount =
+          ordersArray[i].parameters.consideration[j].endAmount;
+      }
+    }
+
+    if (criteriaResolvers) {
+      for (const { orderIndex, side, index, identifier } of criteriaResolvers) {
+        const itemType =
+          ordersClone[orderIndex].parameters[
+            side === 0 ? "offer" : "consideration"
+          ][index].itemType;
+        if (itemType < 4) {
+          console.error("APPLYING CRITERIA TO NON-CRITERIA-BASED ITEM");
+          process.exit(1);
+        }
+
+        ordersClone[orderIndex].parameters[
+          side === 0 ? "offer" : "consideration"
+        ][index].itemType = itemType - 2;
+        ordersClone[orderIndex].parameters[
+          side === 0 ? "offer" : "consideration"
+        ][index].identifierOrCriteria = identifier;
+      }
+    }
+
+    const allOfferedItems = ordersClone
+      .map((x) =>
+        x.parameters.offer.map((offerItem) => ({
+          ...offerItem,
+          account: x.parameters.offerer,
+          numerator: x.numerator,
+          denominator: x.denominator,
+          startTime: x.parameters.startTime,
+          endTime: x.parameters.endTime,
+        }))
+      )
+      .flat();
+
+    const allReceivedItems = ordersClone
+      .map((x) =>
+        x.parameters.consideration.map((considerationItem) => ({
+          ...considerationItem,
+          numerator: x.numerator,
+          denominator: x.denominator,
+          startTime: x.parameters.startTime,
+          endTime: x.parameters.endTime,
+        }))
+      )
+      .flat();
+
+    for (const offeredItem of allOfferedItems as any[]) {
+      if (offeredItem.itemType > 3) {
+        console.error("CRITERIA ON OFFERED ITEM NOT RESOLVED");
+        process.exit(1);
+      }
+
+      if (offeredItem.itemType === 0) {
+        // ETH
+        offeredItem.initialBalance = await provider.getBalance(
+          offeredItem.account
+        );
+      } else if (offeredItem.itemType === 3) {
+        // ERC1155
+        offeredItem.initialBalance = await tokenByType[
+          offeredItem.itemType
+        ].balanceOf(offeredItem.account, offeredItem.identifierOrCriteria);
+      } else if (offeredItem.itemType < 4) {
+        offeredItem.initialBalance = await tokenByType[
+          offeredItem.itemType
+        ].balanceOf(offeredItem.account);
+      }
+
+      if (offeredItem.itemType === 2) {
+        // ERC721
+        offeredItem.ownsItemBefore =
+          (await tokenByType[offeredItem.itemType].ownerOf(
+            offeredItem.identifierOrCriteria
+          )) === offeredItem.account;
+      }
+    }
+
+    for (const receivedItem of allReceivedItems as any[]) {
+      if (receivedItem.itemType > 3) {
+        console.error(
+          "CRITERIA-BASED BALANCE RECEIVED CHECKS NOT IMPLEMENTED YET"
+        );
+        process.exit(1);
+      }
+
+      if (receivedItem.itemType === 0) {
+        // ETH
+        receivedItem.initialBalance = await provider.getBalance(
+          receivedItem.recipient
+        );
+      } else if (receivedItem.itemType === 3) {
+        // ERC1155
+        receivedItem.initialBalance = await tokenByType[
+          receivedItem.itemType
+        ].balanceOf(receivedItem.recipient, receivedItem.identifierOrCriteria);
+      } else {
+        receivedItem.initialBalance = await tokenByType[
+          receivedItem.itemType
+        ].balanceOf(receivedItem.recipient);
+      }
+
+      if (receivedItem.itemType === 2) {
+        // ERC721
+        receivedItem.ownsItemBefore =
+          (await tokenByType[receivedItem.itemType].ownerOf(
+            receivedItem.identifierOrCriteria
+          )) === receivedItem.recipient;
+      }
+    }
+
+    const receipt = await fn();
+
+    const from = receipt.from;
+    const gasUsed = receipt.gasUsed;
+
+    for (const offeredItem of allOfferedItems as any[]) {
+      if (offeredItem.account === from && offeredItem.itemType === 0) {
+        offeredItem.initialBalance = offeredItem.initialBalance.sub(gasUsed);
+      }
+    }
+
+    for (const receivedItem of allReceivedItems as any[]) {
+      if (receivedItem.recipient === from && receivedItem.itemType === 0) {
+        receivedItem.initialBalance = receivedItem.initialBalance.sub(gasUsed);
+      }
+    }
+
+    for (const offeredItem of allOfferedItems as any[]) {
+      if (offeredItem.itemType > 3) {
+        console.error("CRITERIA-BASED BALANCE OFFERED CHECKS NOT MET");
+        process.exit(1);
+      }
+
+      if (offeredItem.itemType === 0) {
+        // ETH
+        offeredItem.finalBalance = await provider.getBalance(
+          offeredItem.account
+        );
+      } else if (offeredItem.itemType === 3) {
+        // ERC1155
+        offeredItem.finalBalance = await tokenByType[
+          offeredItem.itemType
+        ].balanceOf(offeredItem.account, offeredItem.identifierOrCriteria);
+      } else if (offeredItem.itemType < 3) {
+        // TODO: criteria-based
+        offeredItem.finalBalance = await tokenByType[
+          offeredItem.itemType
+        ].balanceOf(offeredItem.account);
+      }
+
+      if (offeredItem.itemType === 2) {
+        // ERC721
+        offeredItem.ownsItemAfter =
+          (await tokenByType[offeredItem.itemType].ownerOf(
+            offeredItem.identifierOrCriteria
+          )) === offeredItem.account;
+      }
+    }
+
+    for (const receivedItem of allReceivedItems as any[]) {
+      if (receivedItem.itemType > 3) {
+        console.error("CRITERIA-BASED BALANCE RECEIVED CHECKS NOT MET");
+        process.exit(1);
+      }
+
+      if (receivedItem.itemType === 0) {
+        // ETH
+        receivedItem.finalBalance = await provider.getBalance(
+          receivedItem.recipient
+        );
+      } else if (receivedItem.itemType === 3) {
+        // ERC1155
+        receivedItem.finalBalance = await tokenByType[
+          receivedItem.itemType
+        ].balanceOf(receivedItem.recipient, receivedItem.identifierOrCriteria);
+      } else {
+        receivedItem.finalBalance = await tokenByType[
+          receivedItem.itemType
+        ].balanceOf(receivedItem.recipient);
+      }
+
+      if (receivedItem.itemType === 2) {
+        // ERC721
+        receivedItem.ownsItemAfter =
+          (await tokenByType[receivedItem.itemType].ownerOf(
+            receivedItem.identifierOrCriteria
+          )) === receivedItem.recipient;
+      }
+    }
+
+    const { timestamp } = await provider.getBlock(receipt.blockHash);
+
+    for (const offeredItem of allOfferedItems as any[]) {
+      const duration = toBN(offeredItem.endTime).sub(offeredItem.startTime);
+      const elapsed = toBN(timestamp).sub(offeredItem.startTime);
+      const remaining = duration.sub(elapsed);
+
+      if (offeredItem.itemType < 4) {
+        // TODO: criteria-based
+        if (!additionalPayouts) {
+          expect(
+            offeredItem.initialBalance.sub(offeredItem.finalBalance).toString()
+          ).to.equal(
+            toBN(offeredItem.startAmount)
+              .mul(remaining)
+              .add(toBN(offeredItem.endAmount).mul(elapsed))
+              .div(duration)
+              .mul(offeredItem.numerator)
+              .div(offeredItem.denominator)
+              .mul(multiplier)
+              .toString()
+          );
+        } else {
+          expect(
+            offeredItem.initialBalance.sub(offeredItem.finalBalance).toString()
+          ).to.equal(additionalPayouts.add(offeredItem.endAmount).toString());
+        }
+      }
+
+      if (offeredItem.itemType === 2) {
+        // ERC721
+        expect(offeredItem.ownsItemBefore).to.equal(true);
+        expect(offeredItem.ownsItemAfter).to.equal(false);
+      }
+    }
+
+    for (const receivedItem of allReceivedItems as any[]) {
+      const duration = toBN(receivedItem.endTime).sub(receivedItem.startTime);
+      const elapsed = toBN(timestamp).sub(receivedItem.startTime);
+      const remaining = duration.sub(elapsed);
+
+      expect(
+        receivedItem.finalBalance.sub(receivedItem.initialBalance).toString()
+      ).to.equal(
+        toBN(receivedItem.startAmount)
+          .mul(remaining)
+          .add(toBN(receivedItem.endAmount).mul(elapsed))
+          .add(duration.sub(1))
+          .div(duration)
+          .mul(receivedItem.numerator)
+          .div(receivedItem.denominator)
+          .mul(multiplier)
+          .toString()
+      );
+
+      if (receivedItem.itemType === 2) {
+        // ERC721
+        expect(receivedItem.ownsItemBefore).to.equal(false);
+        expect(receivedItem.ownsItemAfter).to.equal(true);
+      }
+    }
+
+    return receipt;
+  };
+
+  const checkTransferEvent = async (
+    tx: ContractTransaction | Promise<ContractTransaction>,
+    item: (OfferItem | ConsiderationItem) & {
+      identifier?: string;
+      amount?: BigNumberish;
+      recipient?: string;
+    },
+    {
+      offerer,
+      conduitKey,
+      target,
+    }: { offerer: string; conduitKey: string; target: string }
+  ) => {
+    const {
+      itemType,
+      token,
+      identifier: id1,
+      identifierOrCriteria: id2,
+      amount,
+      recipient,
+    } = item;
+    const identifier = id1 ?? id2;
+    const sender = getTransferSender(offerer, conduitKey);
+    if ([1, 2, 5].includes(itemType)) {
+      const contract = new Contract(
+        token,
+        (itemType === 1 ? testERC20 : testERC721).interface,
+        provider
+      );
+      await expect(tx)
+        .to.emit(contract, "Transfer")
+        .withArgs(offerer, recipient, itemType === 1 ? amount : identifier);
+    } else if ([3, 4].includes(itemType)) {
+      const contract = new Contract(token, testERC1155.interface, provider);
+      const operator = sender !== offerer ? sender : target;
+      await expect(tx)
+        .to.emit(contract, "TransferSingle")
+        .withArgs(operator, offerer, recipient, identifier, amount);
+    }
+  };
+
+  const checkExpectedEvents = async (
+    tx: Promise<ContractTransaction> | ContractTransaction,
+    receipt: ContractReceipt,
+    orderGroups: Array<{
+      order: AdvancedOrder;
+      orderHash: string;
+      fulfiller?: string;
+      fulfillerConduitKey?: string;
+      recipient?: string;
+    }>,
+    standardExecutions: any[] = [],
+    criteriaResolvers: any[] = [],
+    shouldSkipAmountComparison = false,
+    multiplier = 1
+  ) => {
+    const { timestamp } = await provider.getBlock(receipt.blockHash);
+
+    if (standardExecutions && standardExecutions.length) {
+      for (const standardExecution of standardExecutions) {
+        const { item, offerer, conduitKey } = standardExecution;
+        await checkTransferEvent(tx, item, {
+          offerer,
+          conduitKey,
+          target: receipt.to,
+        });
+      }
+
+      // TODO: sum up executions and compare to orders to ensure that all the
+      // items (or partially-filled items) are accounted for
+    }
+
+    if (criteriaResolvers && criteriaResolvers.length) {
+      for (const { orderIndex, side, index, identifier } of criteriaResolvers) {
+        const itemType =
+          orderGroups[orderIndex].order.parameters[
+            side === 0 ? "offer" : "consideration"
+          ][index].itemType;
+        if (itemType < 4) {
+          console.error("APPLYING CRITERIA TO NON-CRITERIA-BASED ITEM");
+          process.exit(1);
+        }
+
+        orderGroups[orderIndex].order.parameters[
+          side === 0 ? "offer" : "consideration"
+        ][index].itemType = itemType - 2;
+        orderGroups[orderIndex].order.parameters[
+          side === 0 ? "offer" : "consideration"
+        ][index].identifierOrCriteria = identifier;
+      }
+    }
+
+    const txMethod = (await tx).data.slice(0, 10);
+    const matchMethods = [
+      marketplaceContract.interface.getSighash("matchOrders"),
+      marketplaceContract.interface.getSighash("matchAdvancedOrders"),
+    ];
+    const isMatchMethod = matchMethods.includes(txMethod);
+    if (isMatchMethod) {
+      await expect(Promise.resolve(tx))
+        .to.emit(marketplaceContract, "OrdersMatched")
+        .withArgs(orderGroups.map((o) => o.orderHash));
+    }
+
+    for (let {
+      order,
+      orderHash,
+      fulfiller,
+      fulfillerConduitKey,
+      recipient,
+    } of orderGroups) {
+      if (!recipient) {
+        recipient = fulfiller;
+      }
+      const duration = toBN(order.parameters.endTime).sub(
+        order.parameters.startTime as any
+      );
+      const elapsed = toBN(timestamp).sub(order.parameters.startTime as any);
+      const remaining = duration.sub(elapsed);
+
+      const marketplaceContractOrderFulfilledEvents = (receipt.events as any[])
+        .filter((x) => x.address === marketplaceContract.address)
+        .filter((x) => x.event === "OrderFulfilled")
+        .map((x) => ({
+          eventName: x.event,
+          eventSignature: x.eventSignature,
+          orderHash: x.args.orderHash,
+          offerer: x.args.offerer,
+          zone: x.args.zone,
+          recipient: x.args.recipient,
+          offer: x.args.offer.map((y: any) => ({
+            itemType: y.itemType,
+            token: y.token,
+            identifier: y.identifier,
+            amount: y.amount,
+          })),
+          consideration: x.args.consideration.map((y: any) => ({
+            itemType: y.itemType,
+            token: y.token,
+            identifier: y.identifier,
+            amount: y.amount,
+            recipient: y.recipient,
+          })),
+        }))
+        .filter((x) => x.orderHash === orderHash);
+
+      expect(marketplaceContractOrderFulfilledEvents.length).to.equal(1);
+
+      const event = marketplaceContractOrderFulfilledEvents[0];
+
+      expect(event.eventName).to.equal("OrderFulfilled");
+      expect(event.eventSignature).to.equal(
+        "OrderFulfilled(" +
+          "bytes32,address,address,address,(" +
+          "uint8,address,uint256,uint256)[],(" +
+          "uint8,address,uint256,uint256,address)[])"
+      );
+      expect(event.orderHash).to.equal(orderHash);
+      expect(event.offerer).to.equal(order.parameters.offerer);
+      expect(event.zone).to.equal(order.parameters.zone);
+      expect(event.recipient).to.equal(recipient);
+
+      const txMethod = (await tx).data.slice(0, 10);
+      const matchMethods = [
+        marketplaceContract.interface.getSighash("matchOrders"),
+        marketplaceContract.interface.getSighash("matchAdvancedOrders"),
+      ];
+      if (txMethod in matchMethods) {
+        const marketplaceContractOrdersMatchedEvents = (receipt.events as any[])
+          .filter((x) => x.address === marketplaceContract.address)
+          .filter((x) => x.event === "OrdersMatched")
+          .map((x) => ({
+            eventName: x.event,
+            eventSignature: x.eventSignature,
+            orderHashes: x.args.orderHashes,
+          }));
+        expect(marketplaceContractOrdersMatchedEvents.length).to.equal(1);
+        expect(
+          marketplaceContractOrdersMatchedEvents[0].orderHashes.length
+        ).to.equal(orderGroups.length);
+        expect(
+          marketplaceContractOrdersMatchedEvents[0].orderHashes
+        ).to.include(event.orderHash);
+      }
+
+      const { offerer, conduitKey, consideration, offer } = order.parameters;
+      const compareEventItems = async (
+        item: any,
+        orderItem: OfferItem | ConsiderationItem,
+        isConsiderationItem: boolean
+      ) => {
+        expect(item.itemType).to.equal(
+          orderItem.itemType > 3 ? orderItem.itemType - 2 : orderItem.itemType
+        );
+        expect(item.token).to.equal(orderItem.token);
+        expect(item.token).to.equal(tokenByType[item.itemType].address);
+        if (orderItem.itemType < 4) {
+          // no criteria-based
+          expect(item.identifier).to.equal(orderItem.identifierOrCriteria);
+        } else {
+          console.error("CRITERIA-BASED EVENT VALIDATION NOT MET");
+          process.exit(1);
+        }
+
+        if (order.parameters.orderType === 0) {
+          // FULL_OPEN (no partial fills)
+          if (
+            orderItem.startAmount.toString() === orderItem.endAmount.toString()
+          ) {
+            expect(item.amount.toString()).to.equal(
+              orderItem.endAmount.toString()
+            );
+          } else {
+            expect(item.amount.toString()).to.equal(
+              toBN(orderItem.startAmount)
+                .mul(remaining)
+                .add(toBN(orderItem.endAmount).mul(elapsed))
+                .add(isConsiderationItem ? duration.sub(1) : 0)
+                .div(duration)
+                .toString()
+            );
+          }
+        } else {
+          if (
+            orderItem.startAmount.toString() === orderItem.endAmount.toString()
+          ) {
+            expect(item.amount.toString()).to.equal(
+              orderItem.endAmount
+                .mul(order.numerator)
+                .div(order.denominator)
+                .toString()
+            );
+          } else {
+            console.error("SLIDING AMOUNT NOT IMPLEMENTED YET");
+            process.exit(1);
+          }
+        }
+      };
+
+      if (!standardExecutions || !standardExecutions.length) {
+        for (const item of consideration) {
+          const { startAmount, endAmount } = item;
+          let amount;
+          if (order.parameters.orderType === 0) {
+            amount = startAmount.eq(endAmount)
+              ? endAmount
+              : startAmount
+                  .mul(remaining)
+                  .add(endAmount.mul(elapsed))
+                  .add(duration.sub(1))
+                  .div(duration);
+          } else {
+            amount = endAmount.mul(order.numerator).div(order.denominator);
+          }
+          amount = amount.mul(multiplier);
+
+          await checkTransferEvent(
+            tx,
+            { ...item, amount },
+            {
+              offerer: receipt.from,
+              conduitKey: fulfillerConduitKey!,
+              target: receipt.to,
+            }
+          );
+        }
+
+        for (const item of offer) {
+          const { startAmount, endAmount } = item;
+          let amount;
+          if (order.parameters.orderType === 0) {
+            amount = startAmount.eq(endAmount)
+              ? endAmount
+              : startAmount
+                  .mul(remaining)
+                  .add(endAmount.mul(elapsed))
+                  .div(duration);
+          } else {
+            amount = endAmount.mul(order.numerator).div(order.denominator);
+          }
+          amount = amount.mul(multiplier);
+
+          await checkTransferEvent(
+            tx,
+            { ...item, amount, recipient },
+            {
+              offerer,
+              conduitKey,
+              target: receipt.to,
+            }
+          );
+        }
+      }
+
+      expect(event.offer.length).to.equal(order.parameters.offer.length);
+      for (const [index, offer] of Object.entries(event.offer) as any[]) {
+        const offerItem = order.parameters.offer[index];
+        await compareEventItems(offer, offerItem, false);
+
+        const tokenEvents = receipt.events?.filter(
+          (x) => x.address === offerItem.token
+        );
+
+        if (
+          offer.itemType === 1 &&
+          standardExecutions.map((x) => x.item.itemType).includes(1)
+        ) {
+          // ERC20
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC20.interface.parseLog(x))
+            .filter(
+              (x) =>
+                x.signature === "Transfer(address,address,uint256)" &&
+                x.args.from === event.offerer /* &&
+                // TODO: work out better way to check recipient with new matchOrder logic
+                (recipient !== constants.AddressZero
+                  ? x.args.to === recipient
+                  : true) */
+            );
+
+          expect(transferLogs.length).to.be.above(0);
+          // TODO: check each transferred amount
+          // for (const transferLog of transferLogs) {
+          // }
+        } else if (
+          offer.itemType === 2 &&
+          standardExecutions.map((x) => x.item.itemType).includes(2)
+        ) {
+          // ERC721
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC721.interface.parseLog(x))
+            .filter(
+              (x) =>
+                x.signature === "Transfer(address,address,uint256)" &&
+                x.args.from === event.offerer /* &&
+                // TODO: work out better way to check recipient with new matchOrder logic
+                (recipient !== constants.AddressZero
+                  ? x.args.to === recipient
+                  : true) */
+            );
+
+          expect(transferLogs.length).to.equal(1);
+          const transferLog = transferLogs[0];
+          expect(transferLog.args.id.toString()).to.equal(
+            offer.identifier.toString()
+          );
+        } else if (
+          offer.itemType === 3 &&
+          standardExecutions.map((x) => x.item.itemType).includes(3)
+        ) {
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC1155.interface.parseLog(x))
+            .filter(
+              (x) =>
+                (x.signature ===
+                  "TransferSingle(address,address,address,uint256,uint256)" &&
+                  x.args.from === event.offerer) /* &&
+                  // TODO: work out better way to check recipient with new matchOrder logic
+                  (fulfiller !== constants.AddressZero
+                    ? x.args.to === fulfiller
+                    : true) */ ||
+                (x.signature ===
+                  "TransferBatch(address,address,address,uint256[],uint256[])" &&
+                  x.args.from === event.offerer) /* &&
+                  // TODO: work out better way to check recipient with new matchOrder logic
+                  (fulfiller !== constants.AddressZero
+                    ? x.args.to === fulfiller
+                    : true) */
+            );
+
+          expect(transferLogs.length).to.be.above(0);
+
+          let found = false;
+          for (const transferLog of transferLogs) {
+            if (
+              transferLog.signature ===
+                "TransferSingle(address,address,address,uint256,uint256)" &&
+              transferLog.args.id.toString() === offer.identifier.toString() &&
+              (shouldSkipAmountComparison ||
+                transferLog.args.amount.toString() ===
+                  offer.amount.mul(multiplier).toString())
+            ) {
+              found = true;
+              break;
+            }
+          }
+
+          // eslint-disable-next-line no-unused-expressions
+          expect(found).to.be.true;
+        }
+      }
+
+      expect(event.consideration.length).to.equal(
+        order.parameters.consideration.length
+      );
+      for (const [index, consideration] of Object.entries(
+        event.consideration
+      ) as any[]) {
+        const considerationItem = order.parameters.consideration[index];
+        await compareEventItems(consideration, considerationItem, true);
+        expect(consideration.recipient).to.equal(considerationItem.recipient);
+
+        const tokenEvents = receipt.events?.filter(
+          (x) => x.address === considerationItem.token
+        );
+
+        if (
+          consideration.itemType === 1 &&
+          standardExecutions.map((x) => x.item.itemType).includes(1)
+        ) {
+          // ERC20
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC20.interface.parseLog(x))
+            .filter(
+              (x) =>
+                x.signature === "Transfer(address,address,uint256)" &&
+                x.args.to === consideration.recipient
+            );
+
+          expect(transferLogs.length).to.be.above(0);
+          // TODO: check each transferred amount
+          // for (const transferLog of transferLogs) {
+          // }
+        } else if (
+          consideration.itemType === 2 &&
+          standardExecutions.map((x) => x.item.itemType).includes(2)
+        ) {
+          // ERC721
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC721.interface.parseLog(x))
+            .filter(
+              (x) =>
+                x.signature === "Transfer(address,address,uint256)" &&
+                x.args.to === consideration.recipient
+            );
+
+          expect(transferLogs.length).to.equal(1);
+          const transferLog = transferLogs[0];
+          expect(transferLog.args.id.toString()).to.equal(
+            consideration.identifier.toString()
+          );
+        } else if (
+          consideration.itemType === 3 &&
+          standardExecutions.map((x) => x.item.itemType).includes(3)
+        ) {
+          // search for transfer
+          const transferLogs = (tokenEvents ?? [])
+            .map((x) => testERC1155.interface.parseLog(x))
+            .filter(
+              (x) =>
+                (x.signature ===
+                  "TransferSingle(address,address,address,uint256,uint256)" &&
+                  x.args.to === consideration.recipient) ||
+                (x.signature ===
+                  "TransferBatch(address,address,address,uint256[],uint256[])" &&
+                  x.args.to === consideration.recipient)
+            );
+
+          expect(transferLogs.length).to.be.above(0);
+
+          let found = false;
+          for (const transferLog of transferLogs) {
+            if (
+              transferLog.signature ===
+                "TransferSingle(address,address,address,uint256,uint256)" &&
+              transferLog.args.id.toString() ===
+                consideration.identifier.toString() &&
+              (shouldSkipAmountComparison ||
+                transferLog.args.amount.toString() ===
+                  consideration.amount.mul(multiplier).toString())
+            ) {
+              found = true;
+              break;
+            }
+          }
+
+          // eslint-disable-next-line no-unused-expressions
+          expect(found).to.be.true;
+        }
+      }
+    }
+  };
+
+  return {
+    EIP1271WalletFactory,
+    reenterer,
+    chainId,
+    conduitController,
+    conduitImplementation,
+    conduitKeyOne,
+    conduitOne,
+    getTransferSender,
+    deployNewConduit,
+    testERC20,
+    mintAndApproveERC20,
+    getTestItem20,
+    testERC721,
+    set721ApprovalForAll,
+    mint721,
+    mint721s,
+    mintAndApprove721,
+    getTestItem721,
+    getTestItem721WithCriteria,
+    testERC1155,
+    set1155ApprovalForAll,
+    mint1155,
+    mintAndApprove1155,
+    getTestItem1155WithCriteria,
+    getTestItem1155,
+    testERC1155Two,
+    tokenByType,
+    createTransferWithApproval,
+    marketplaceContract,
+    directMarketplaceContract,
+    stubZone,
+    postExecutionZone,
+    invalidContractOfferer,
+    invalidContractOffererRatifyOrder,
+    domainData,
+    signOrder,
+    signBulkOrder,
+    createOrder,
+    createMirrorBuyNowOrder,
+    createMirrorAcceptOfferOrder,
+    withBalanceChecks,
+    checkTransferEvent,
+    checkExpectedEvents,
+  };
+};
+
+export type SeaportFixtures = Awaited<ReturnType<typeof seaportFixture>>;
+----- End of fixtures/index.ts -----
+
+----- Begin of fixtures/marketplace.ts -----
+import { expect } from "chai";
+import { constants } from "ethers";
+import { keccak256, recoverAddress } from "ethers/lib/utils";
+import hre, { ethers } from "hardhat";
+
+import { deployContract } from "../contracts";
+import { getBulkOrderTree } from "../eip712/bulk-orders";
+import {
+  calculateOrderHash,
+  convertSignatureToEIP2098,
+  randomHex,
+  toBN,
+} from "../encoding";
+import { VERSION } from "../helpers";
+
+import type {
+  ConduitControllerInterface,
+  ConduitInterface,
+  ConsiderationInterface,
+  ImmutableCreate2FactoryInterface,
+  TestInvalidContractOfferer,
+  TestInvalidContractOffererRatifyOrder,
+  TestPostExecution,
+  TestZone,
+} from "../../../typechain-types";
+import type {
+  AdvancedOrder,
+  ConsiderationItem,
+  CriteriaResolver,
+  OfferItem,
+  OrderComponents,
+} from "../types";
+import type { Contract, Wallet } from "ethers";
+
+const deployConstants = require("../../../constants/constants");
+// const { bulkOrderType } = require("../../../eip-712-types/bulkOrder");
+const { orderType } = require("../../../eip-712-types/order");
+
+export const marketplaceFixture = async (
+  create2Factory: ImmutableCreate2FactoryInterface,
+  conduitController: ConduitControllerInterface,
+  conduitOne: ConduitInterface,
+  chainId: number,
+  owner: Wallet
+) => {
+  // Deploy marketplace contract through efficient create2 factory
+  const marketplaceContractFactory = await ethers.getContractFactory(
+    process.env.REFERENCE ? "ReferenceConsideration" : "Seaport"
+  );
+
+  const directMarketplaceContract =
+    await deployContract<ConsiderationInterface>(
+      process.env.REFERENCE ? "ReferenceConsideration" : "Consideration",
+      owner,
+      conduitController.address
+    );
+
+  const marketplaceContractAddress = await create2Factory.findCreate2Address(
+    deployConstants.MARKETPLACE_CONTRACT_CREATION_SALT,
+    marketplaceContractFactory.bytecode +
+      conduitController.address.slice(2).padStart(64, "0")
+  );
+
+  let { gasLimit } = await ethers.provider.getBlock("latest");
+
+  if ((hre as any).__SOLIDITY_COVERAGE_RUNNING) {
+    gasLimit = ethers.BigNumber.from(300_000_000);
+  }
+
+  await create2Factory.safeCreate2(
+    deployConstants.MARKETPLACE_CONTRACT_CREATION_SALT,
+    marketplaceContractFactory.bytecode +
+      conduitController.address.slice(2).padStart(64, "0"),
+    {
+      gasLimit,
+    }
+  );
+
+  const marketplaceContract = (await ethers.getContractAt(
+    process.env.REFERENCE ? "ReferenceConsideration" : "Seaport",
+    marketplaceContractAddress,
+    owner
+  )) as ConsiderationInterface;
+
+  await conduitController
+    .connect(owner)
+    .updateChannel(conduitOne.address, marketplaceContract.address, true);
+
+  const stubZone = await deployContract<TestZone>("TestZone", owner);
+  const postExecutionZone = await deployContract<TestPostExecution>(
+    "TestPostExecution",
+    owner
+  );
+
+  const invalidContractOfferer =
+    await deployContract<TestInvalidContractOfferer>(
+      "TestInvalidContractOfferer",
+      owner,
+      marketplaceContractAddress
+    );
+
+  const invalidContractOffererRatifyOrder =
+    await deployContract<TestInvalidContractOffererRatifyOrder>(
+      "TestInvalidContractOffererRatifyOrder",
+      owner,
+      marketplaceContractAddress
+    );
+
+  // Required for EIP712 signing
+  const domainData = {
+    name: process.env.REFERENCE ? "Consideration" : "Seaport",
+    version: VERSION,
+    chainId,
+    verifyingContract: marketplaceContract.address,
+  };
+
+  const getAndVerifyOrderHash = async (orderComponents: OrderComponents) => {
+    const orderHash = await marketplaceContract.getOrderHash(orderComponents);
+    const derivedOrderHash = calculateOrderHash(orderComponents);
+    expect(orderHash).to.equal(derivedOrderHash);
+    return orderHash;
+  };
+
+  // Returns signature
+  const signOrder = async (
+    orderComponents: OrderComponents,
+    signer: Wallet | Contract,
+    marketplace = marketplaceContract
+  ) => {
+    const signature = await signer._signTypedData(
+      { ...domainData, verifyingContract: marketplace.address },
+      orderType,
+      orderComponents
+    );
+
+    const orderHash = await getAndVerifyOrderHash(orderComponents);
+
+    const { domainSeparator } = await marketplace.information();
+    const digest = keccak256(
+      `0x1901${domainSeparator.slice(2)}${orderHash.slice(2)}`
+    );
+    const recoveredAddress = recoverAddress(digest, signature);
+
+    expect(recoveredAddress).to.equal(signer.address);
+
+    return signature;
+  };
+
+  const signBulkOrder = async (
+    orderComponents: OrderComponents[],
+    signer: Wallet | Contract,
+    startIndex = 0,
+    height?: number,
+    extraCheap?: boolean
+  ) => {
+    const tree = getBulkOrderTree(orderComponents, startIndex, height);
+    const bulkOrderType = tree.types;
+    const chunks = tree.getDataToSign();
+    let signature = await signer._signTypedData(domainData, bulkOrderType, {
+      tree: chunks,
+    });
+
+    if (extraCheap) {
+      signature = convertSignatureToEIP2098(signature);
+    }
+
+    const proofAndSignature = tree.getEncodedProofAndSignature(
+      startIndex,
+      signature
+    );
+
+    const orderHash = tree.getBulkOrderHash();
+
+    const { domainSeparator } = await marketplaceContract.information();
+    const digest = keccak256(
+      `0x1901${domainSeparator.slice(2)}${orderHash.slice(2)}`
+    );
+    const recoveredAddress = recoverAddress(digest, signature);
+
+    expect(recoveredAddress).to.equal(signer.address);
+
+    // Verify each individual order
+    for (const components of orderComponents) {
+      const individualOrderHash = await getAndVerifyOrderHash(components);
+      const digest = keccak256(
+        `0x1901${domainSeparator.slice(2)}${individualOrderHash.slice(2)}`
+      );
+      const individualOrderSignature = await signer._signTypedData(
+        domainData,
+        orderType,
+        components
+      );
+      const recoveredAddress = recoverAddress(digest, individualOrderSignature);
+      expect(recoveredAddress).to.equal(signer.address);
+    }
+
+    return proofAndSignature;
+  };
+
+  const createOrder = async (
+    offerer: Wallet | Contract,
+    zone:
+      | TestZone
+      | TestPostExecution
+      | Wallet
+      | undefined
+      | string = undefined,
+    offer: OfferItem[],
+    consideration: ConsiderationItem[],
+    orderType: number,
+    criteriaResolvers?: CriteriaResolver[],
+    timeFlag?: string | null,
+    signer?: Wallet,
+    zoneHash = constants.HashZero,
+    conduitKey = constants.HashZero,
+    extraCheap = false,
+    useBulkSignature = false,
+    bulkSignatureIndex?: number,
+    bulkSignatureHeight?: number,
+    marketplace = marketplaceContract
+  ) => {
+    const counter = await marketplace.getCounter(offerer.address);
+
+    const salt = !extraCheap ? randomHex() : constants.HashZero;
+    const startTime =
+      timeFlag !== "NOT_STARTED" ? 0 : toBN("0xee00000000000000000000000000");
+    const endTime =
+      timeFlag !== "EXPIRED" ? toBN("0xff00000000000000000000000000") : 1;
+
+    const orderParameters = {
+      offerer: offerer.address,
+      zone: !extraCheap
+        ? (zone as Wallet).address ?? zone
+        : constants.AddressZero,
+      offer,
+      consideration,
+      totalOriginalConsiderationItems: consideration.length,
+      orderType,
+      zoneHash,
+      salt,
+      conduitKey,
+      startTime,
+      endTime,
+    };
+
+    const orderComponents = {
+      ...orderParameters,
+      counter,
+    };
+
+    const orderHash = await getAndVerifyOrderHash(orderComponents);
+
+    const { isValidated, isCancelled, totalFilled, totalSize } =
+      await marketplace.getOrderStatus(orderHash);
+
+    expect(isCancelled).to.equal(false);
+
+    const orderStatus = {
+      isValidated,
+      isCancelled,
+      totalFilled,
+      totalSize,
+    };
+
+    const flatSig = await signOrder(
+      orderComponents,
+      signer ?? offerer,
+      marketplace
+    );
+
+    const order = {
+      parameters: orderParameters,
+      signature: !extraCheap ? flatSig : convertSignatureToEIP2098(flatSig),
+      numerator: 1, // only used for advanced orders
+      denominator: 1, // only used for advanced orders
+      extraData: "0x", // only used for advanced orders
+    };
+
+    if (useBulkSignature) {
+      order.signature = await signBulkOrder(
+        [orderComponents],
+        signer ?? offerer,
+        bulkSignatureIndex,
+        bulkSignatureHeight,
+        extraCheap
+      );
+
+      // Verify bulk signature length
+      expect(
+        order.signature.slice(2).length / 2,
+        "bulk signature length should be valid (98 < length < 837)"
+      )
+        .to.be.gt(98)
+        .and.lt(837);
+      expect(
+        (order.signature.slice(2).length / 2 - 67) % 32,
+        "bulk signature length should be valid ((length - 67) % 32 < 2)"
+      ).to.be.lt(2);
+    }
+
+    // How much ether (at most) needs to be supplied when fulfilling the order
+    const value = offer
+      .map((x) =>
+        x.itemType === 0
+          ? x.endAmount.gt(x.startAmount)
+            ? x.endAmount
+            : x.startAmount
+          : toBN(0)
+      )
+      .reduce((a, b) => a.add(b), toBN(0))
+      .add(
+        consideration
+          .map((x) =>
+            x.itemType === 0
+              ? x.endAmount.gt(x.startAmount)
+                ? x.endAmount
+                : x.startAmount
+              : toBN(0)
+          )
+          .reduce((a, b) => a.add(b), toBN(0))
+      );
+
+    return {
+      order,
+      orderHash,
+      value,
+      orderStatus,
+      orderComponents,
+      startTime,
+      endTime,
+    };
+  };
+
+  const createMirrorBuyNowOrder = async (
+    offerer: Wallet,
+    zone: Wallet,
+    order: AdvancedOrder,
+    conduitKey = constants.HashZero
+  ) => {
+    const counter = await marketplaceContract.getCounter(offerer.address);
+    const salt = randomHex();
+    const startTime = order.parameters.startTime;
+    const endTime = order.parameters.endTime;
+
+    const compressedOfferItems = [];
+    for (const {
+      itemType,
+      token,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+    } of order.parameters.offer) {
+      if (
+        !compressedOfferItems
+          .map((x) => `${x.itemType}+${x.token}+${x.identifierOrCriteria}`)
+          .includes(`${itemType}+${token}+${identifierOrCriteria}`)
+      ) {
+        compressedOfferItems.push({
+          itemType,
+          token,
+          identifierOrCriteria,
+          startAmount: startAmount.eq(endAmount)
+            ? startAmount
+            : startAmount.sub(1),
+          endAmount: startAmount.eq(endAmount) ? endAmount : endAmount.sub(1),
+        });
+      } else {
+        const index = compressedOfferItems
+          .map((x) => `${x.itemType}+${x.token}+${x.identifierOrCriteria}`)
+          .indexOf(`${itemType}+${token}+${identifierOrCriteria}`);
+
+        compressedOfferItems[index].startAmount = compressedOfferItems[
+          index
+        ].startAmount.add(
+          startAmount.eq(endAmount) ? startAmount : startAmount.sub(1)
+        );
+        compressedOfferItems[index].endAmount = compressedOfferItems[
+          index
+        ].endAmount.add(
+          startAmount.eq(endAmount) ? endAmount : endAmount.sub(1)
+        );
+      }
+    }
+
+    const compressedConsiderationItems = [];
+    for (const {
+      itemType,
+      token,
+      identifierOrCriteria,
+      startAmount,
+      endAmount,
+      recipient,
+    } of order.parameters.consideration) {
+      if (
+        !compressedConsiderationItems
+          .map((x) => `${x.itemType}+${x.token}+${x.identifierOrCriteria}`)
+          .includes(`${itemType}+${token}+${identifierOrCriteria}`)
+      ) {
+        compressedConsiderationItems.push({
+          itemType,
+          token,
+          identifierOrCriteria,
+          startAmount: startAmount.eq(endAmount)
+            ? startAmount
+            : startAmount.add(1),
+          endAmount: startAmount.eq(endAmount) ? endAmount : endAmount.add(1),
+          recipient,
+        });
+      } else {
+        const index = compressedConsiderationItems
+          .map((x) => `${x.itemType}+${x.token}+${x.identifierOrCriteria}`)
+          .indexOf(`${itemType}+${token}+${identifierOrCriteria}`);
+
+        compressedConsiderationItems[index].startAmount =
+          compressedConsiderationItems[index].startAmount.add(
+            startAmount.eq(endAmount) ? startAmount : startAmount.add(1)
+          );
+        compressedConsiderationItems[index].endAmount =
+          compressedConsiderationItems[index].endAmount.add(
+            startAmount.eq(endAmount) ? endAmount : endAmount.add(1)
+          );
+      }
+    }
+
+    const orderParameters = {
+      offerer: offerer.address,
+      zone: zone.address,
+      offer: compressedConsiderationItems.map((x) => ({ ...x })),
+      consideration: compressedOfferItems.map((x) => ({
+        ...x,
+        recipient: offerer.address,
+      })),
+      totalOriginalConsiderationItems: compressedOfferItems.length,
+      orderType: order.parameters.orderType, // FULL_OPEN
+      zoneHash: "0x".padEnd(66, "0"),
+      salt,
+      conduitKey,
+      startTime,
+      endTime,
+    };
+
+    const orderComponents = {
+      ...orderParameters,
+      counter,
+    };
+
+    const flatSig = await signOrder(orderComponents, offerer);
+
+    const mirrorOrderHash = await getAndVerifyOrderHash(orderComponents);
+
+    const mirrorOrder = {
+      parameters: orderParameters,
+      signature: flatSig,
+      numerator: order.numerator, // only used for advanced orders
+      denominator: order.denominator, // only used for advanced orders
+      extraData: "0x", // only used for advanced orders
+    };
+
+    // How much ether (at most) needs to be supplied when fulfilling the order
+    const mirrorValue = orderParameters.consideration
+      .map((x) =>
+        x.itemType === 0
+          ? x.endAmount.gt(x.startAmount)
+            ? x.endAmount
+            : x.startAmount
+          : toBN(0)
+      )
+      .reduce((a, b) => a.add(b), toBN(0));
+
+    return {
+      mirrorOrder,
+      mirrorOrderHash,
+      mirrorValue,
+    };
+  };
+
+  const createMirrorAcceptOfferOrder = async (
+    offerer: Wallet,
+    zone: Wallet,
+    order: AdvancedOrder,
+    criteriaResolvers: CriteriaResolver[] = [],
+    conduitKey = constants.HashZero
+  ) => {
+    const counter = await marketplaceContract.getCounter(offerer.address);
+    const salt = randomHex();
+    const startTime = order.parameters.startTime;
+    const endTime = order.parameters.endTime;
+
+    const orderParameters = {
+      offerer: offerer.address,
+      zone: zone.address,
+      offer: order.parameters.consideration
+        .filter((x) => x.itemType !== 1)
+        .map((x) => ({
+          itemType: x.itemType < 4 ? x.itemType : x.itemType - 2,
+          token: x.token,
+          identifierOrCriteria:
+            x.itemType < 4
+              ? x.identifierOrCriteria
+              : criteriaResolvers[0].identifier,
+          startAmount: x.startAmount,
+          endAmount: x.endAmount,
+        })),
+      consideration: order.parameters.offer.map((x) => ({
+        itemType: x.itemType < 4 ? x.itemType : x.itemType - 2,
+        token: x.token,
+        identifierOrCriteria:
+          x.itemType < 4
+            ? x.identifierOrCriteria
+            : criteriaResolvers[0].identifier,
+        recipient: offerer.address,
+        startAmount: toBN(x.endAmount).sub(
+          order.parameters.consideration
+            .filter(
+              (i) =>
+                i.itemType < 2 &&
+                i.itemType === x.itemType &&
+                i.token === x.token
+            )
+            .map((i) => i.endAmount)
+            .reduce((a, b) => a.add(b), toBN(0))
+        ),
+        endAmount: toBN(x.endAmount).sub(
+          order.parameters.consideration
+            .filter(
+              (i) =>
+                i.itemType < 2 &&
+                i.itemType === x.itemType &&
+                i.token === x.token
+            )
+            .map((i) => i.endAmount)
+            .reduce((a, b) => a.add(b), toBN(0))
+        ),
+      })),
+      totalOriginalConsiderationItems: order.parameters.offer.length,
+      orderType: 0, // FULL_OPEN
+      zoneHash: constants.HashZero,
+      salt,
+      conduitKey,
+      startTime,
+      endTime,
+    };
+
+    const orderComponents = {
+      ...orderParameters,
+      counter,
+    };
+
+    const flatSig = await signOrder(orderComponents, offerer);
+
+    const mirrorOrderHash = await getAndVerifyOrderHash(orderComponents);
+
+    const mirrorOrder = {
+      parameters: orderParameters,
+      signature: flatSig,
+      numerator: 1, // only used for advanced orders
+      denominator: 1, // only used for advanced orders
+      extraData: "0x", // only used for advanced orders
+    };
+
+    // How much ether (at most) needs to be supplied when fulfilling the order
+    const mirrorValue = orderParameters.consideration
+      .map((x) =>
+        x.itemType === 0
+          ? x.endAmount.gt(x.startAmount)
+            ? x.endAmount
+            : x.startAmount
+          : toBN(0)
+      )
+      .reduce((a, b) => a.add(b), toBN(0));
+
+    return {
+      mirrorOrder,
+      mirrorOrderHash,
+      mirrorValue,
+    };
+  };
+
+  return {
+    marketplaceContract,
+    directMarketplaceContract,
+    stubZone,
+    postExecutionZone,
+    invalidContractOfferer,
+    invalidContractOffererRatifyOrder,
+    domainData,
+    signOrder,
+    signBulkOrder,
+    createOrder,
+    createMirrorBuyNowOrder,
+    createMirrorAcceptOfferOrder,
+  };
+};
+----- End of fixtures/marketplace.ts -----
+
+----- Begin of fixtures/conduit.ts -----
+import { expect } from "chai";
+import { constants } from "ethers";
+import { getCreate2Address, keccak256 } from "ethers/lib/utils";
+import hre, { ethers } from "hardhat";
+
+import { deployContract } from "../contracts";
+import { randomHex } from "../encoding";
+
+import type {
+  ConduitControllerInterface,
+  Conduit__factory,
+  ImmutableCreate2FactoryInterface,
+} from "../../../typechain-types";
+import type { Wallet } from "ethers";
+
+const deployConstants = require("../../../constants/constants");
+
+export const conduitFixture = async (
+  create2Factory: ImmutableCreate2FactoryInterface,
+  owner: Wallet
+) => {
+  let conduitController: ConduitControllerInterface;
+  let conduitImplementation: Conduit__factory;
+  if (process.env.REFERENCE) {
+    conduitImplementation = (await ethers.getContractFactory(
+      "ReferenceConduit"
+    )) as Conduit__factory;
+    conduitController = await deployContract("ConduitController", owner);
+  } else {
+    conduitImplementation = await ethers.getContractFactory("Conduit");
+
+    // Deploy conduit controller through efficient create2 factory
+    const conduitControllerFactory = await ethers.getContractFactory(
+      "ConduitController"
+    );
+
+    const conduitControllerAddress = await create2Factory.findCreate2Address(
+      deployConstants.CONDUIT_CONTROLLER_CREATION_SALT,
+      conduitControllerFactory.bytecode
+    );
+
+    let { gasLimit } = await ethers.provider.getBlock("latest");
+
+    if ((hre as any).__SOLIDITY_COVERAGE_RUNNING) {
+      gasLimit = ethers.BigNumber.from(300_000_000);
+    }
+    await create2Factory.safeCreate2(
+      deployConstants.CONDUIT_CONTROLLER_CREATION_SALT,
+      conduitControllerFactory.bytecode,
+      {
+        gasLimit,
+      }
+    );
+
+    conduitController = (await ethers.getContractAt(
+      "ConduitController",
+      conduitControllerAddress,
+      owner
+    )) as any;
+  }
+  const conduitCodeHash = keccak256(conduitImplementation.bytecode);
+
+  const conduitKeyOne = `${owner.address}000000000000000000000000`;
+
+  await conduitController.createConduit(conduitKeyOne, owner.address);
+
+  const { conduit: conduitOneAddress, exists } =
+    await conduitController.getConduit(conduitKeyOne);
+
+  // eslint-disable-next-line no-unused-expressions
+  expect(exists).to.be.true;
+
+  const conduitOne = conduitImplementation.attach(conduitOneAddress);
+
+  const getTransferSender = (account: string, conduitKey: string) => {
+    if (!conduitKey || conduitKey === constants.HashZero) {
+      return account;
+    }
+    return getCreate2Address(
+      conduitController.address,
+      conduitKey,
+      conduitCodeHash
+    );
+  };
+
+  const deployNewConduit = async (owner: Wallet, conduitKey?: string) => {
+    // Create a conduit key with a random salt
+    const assignedConduitKey =
+      conduitKey ?? owner.address + randomHex(12).slice(2);
+
+    const { conduit: tempConduitAddress } = await conduitController.getConduit(
+      assignedConduitKey
+    );
+
+    if (!process.env.REFERENCE) {
+      await expect(
+        conduitController
+          .connect(owner)
+          .createConduit(assignedConduitKey, constants.AddressZero)
+      ).to.be.revertedWithCustomError(conduitController, "InvalidInitialOwner");
+    } else {
+      await expect(
+        conduitController
+          .connect(owner)
+          .createConduit(assignedConduitKey, constants.AddressZero)
+      ).to.be.reverted;
+    }
+
+    await conduitController
+      .connect(owner)
+      .createConduit(assignedConduitKey, owner.address);
+
+    const tempConduit = conduitImplementation.attach(tempConduitAddress);
+    return tempConduit;
+  };
+
+  return {
+    conduitController,
+    conduitImplementation,
+    conduitCodeHash,
+    conduitKeyOne,
+    conduitOne,
+    getTransferSender,
+    deployNewConduit,
+  };
+};
+----- End of fixtures/conduit.ts -----
+
+----- Begin of fixtures/create2.ts -----
+import { expect } from "chai";
+import hre, { ethers } from "hardhat";
+
+import { faucet } from "../faucet";
+
+import type { ImmutableCreate2FactoryInterface } from "../../../typechain-types";
+import type { Wallet } from "ethers";
+
+const deployConstants = require("../../../constants/constants");
+
+export const create2FactoryFixture = async (owner: Wallet) => {
+  // Deploy keyless create2 deployer
+  await faucet(
+    deployConstants.KEYLESS_CREATE2_DEPLOYER_ADDRESS,
+    ethers.provider
+  );
+  await ethers.provider.sendTransaction(
+    deployConstants.KEYLESS_CREATE2_DEPLOYMENT_TRANSACTION
+  );
+  let deployedCode = await ethers.provider.getCode(
+    deployConstants.KEYLESS_CREATE2_ADDRESS
+  );
+  expect(deployedCode).to.equal(deployConstants.KEYLESS_CREATE2_RUNTIME_CODE);
+
+  let { gasLimit } = await ethers.provider.getBlock("latest");
+
+  if ((hre as any).__SOLIDITY_COVERAGE_RUNNING) {
+    gasLimit = ethers.BigNumber.from(300_000_000);
+  }
+
+  // Deploy inefficient deployer through keyless
+  await owner.sendTransaction({
+    to: deployConstants.KEYLESS_CREATE2_ADDRESS,
+    data: deployConstants.IMMUTABLE_CREATE2_FACTORY_CREATION_CODE,
+    gasLimit,
+  });
+  deployedCode = await ethers.provider.getCode(
+    deployConstants.INEFFICIENT_IMMUTABLE_CREATE2_FACTORY_ADDRESS
+  );
+  expect(ethers.utils.keccak256(deployedCode)).to.equal(
+    deployConstants.IMMUTABLE_CREATE2_FACTORY_RUNTIME_HASH
+  );
+
+  const inefficientFactory = await ethers.getContractAt(
+    "ImmutableCreate2FactoryInterface",
+    deployConstants.INEFFICIENT_IMMUTABLE_CREATE2_FACTORY_ADDRESS,
+    owner
+  );
+
+  // Deploy effecient deployer through inefficient deployer
+  await inefficientFactory
+    .connect(owner)
+    .safeCreate2(
+      deployConstants.IMMUTABLE_CREATE2_FACTORY_SALT,
+      deployConstants.IMMUTABLE_CREATE2_FACTORY_CREATION_CODE,
+      {
+        gasLimit,
+      }
+    );
+
+  deployedCode = await ethers.provider.getCode(
+    deployConstants.IMMUTABLE_CREATE2_FACTORY_ADDRESS
+  );
+  expect(ethers.utils.keccak256(deployedCode)).to.equal(
+    deployConstants.IMMUTABLE_CREATE2_FACTORY_RUNTIME_HASH
+  );
+  const create2Factory: ImmutableCreate2FactoryInterface =
+    await ethers.getContractAt(
+      "ImmutableCreate2FactoryInterface",
+      deployConstants.IMMUTABLE_CREATE2_FACTORY_ADDRESS,
+      owner
+    );
+
+  return create2Factory;
+};
+----- End of fixtures/create2.ts -----
+
+----- Begin of eip712/defaults.ts -----
+/* eslint-disable no-dupe-class-members */
+/* eslint-disable no-unused-vars */
+import { Logger } from "@ethersproject/logger";
+import { hexZeroPad } from "ethers/lib/utils";
+
+import type { TypedDataField } from "@ethersproject/abstract-signer";
+
+const logger = new Logger("defaults");
+
+const baseDefaults: Record<string, any> = {
+  integer: 0,
+  address: hexZeroPad("0x", 20),
+  bool: false,
+  bytes: "0x",
+  string: "",
+};
+
+const isNullish = (value: any): boolean => {
+  if (value === undefined) return false;
+
+  return (
+    value !== undefined &&
+    value !== null &&
+    ((["string", "number"].includes(typeof value) &&
+      BigInt(value) === BigInt(0)) ||
+      (Array.isArray(value) && value.every(isNullish)) ||
+      (typeof value === "object" && Object.values(value).every(isNullish)) ||
+      (typeof value === "boolean" && value === false))
+  );
+};
+
+function getDefaultForBaseType(type: string): any {
+  // bytesXX
+  const [, width] = type.match(/^bytes(\d+)$/) ?? [];
+  if (width) return hexZeroPad("0x", parseInt(width));
+
+  if (type.match(/^(u?)int(\d*)$/)) type = "integer";
+
+  return baseDefaults[type];
+}
+
+export type EIP712TypeDefinitions = Record<string, TypedDataField[]>;
+
+type DefaultMap<T extends EIP712TypeDefinitions> = {
+  [K in keyof T]: any;
+};
+
+export class DefaultGetter<Types extends EIP712TypeDefinitions> {
+  defaultValues: DefaultMap<Types> = {} as DefaultMap<Types>;
+
+  constructor(protected types: Types) {
+    for (const name in types) {
+      const defaultValue = this.getDefaultValue(name);
+      this.defaultValues[name] = defaultValue;
+      if (!isNullish(defaultValue)) {
+        logger.throwError(
+          `Got non-empty value for type ${name} in default generator: ${defaultValue}`
+        );
+      }
+    }
+  }
+
+  static from<Types extends EIP712TypeDefinitions>(
+    types: Types
+  ): DefaultMap<Types>;
+
+  static from<Types extends EIP712TypeDefinitions>(
+    types: Types,
+    type: keyof Types
+  ): any;
+
+  static from<Types extends EIP712TypeDefinitions>(
+    types: Types,
+    type?: keyof Types
+  ): DefaultMap<Types> {
+    const { defaultValues } = new DefaultGetter(types);
+    if (type) return defaultValues[type];
+    return defaultValues;
+  }
+
+  getDefaultValue(type: string): any {
+    if (this.defaultValues[type]) return this.defaultValues[type];
+    // Basic type (address, bool, uint256, etc)
+    const basic = getDefaultForBaseType(type);
+    if (basic !== undefined) return basic;
+
+    // Array
+    const match = type.match(/^(.*)(\x5b(\d*)\x5d)$/);
+    if (match) {
+      const subtype = match[1];
+      const length = parseInt(match[3]);
+      if (length > 0) {
+        const baseValue = this.getDefaultValue(subtype);
+        return Array(length).fill(baseValue);
+      }
+      return [];
+    }
+
+    // Struct
+    const fields = this.types[type];
+    if (fields) {
+      return fields.reduce(
+        (obj, { name, type }) => ({
+          ...obj,
+          [name]: this.getDefaultValue(type),
+        }),
+        {}
+      );
+    }
+
+    return logger.throwArgumentError(`unknown type: ${type}`, "type", type);
+  }
+}
+----- End of eip712/defaults.ts -----
+
+----- Begin of eip712/bulk-orders.ts -----
+import { _TypedDataEncoder, keccak256, toUtf8Bytes } from "ethers/lib/utils";
+
+import { Eip712MerkleTree } from "./Eip712MerkleTree";
+import { DefaultGetter } from "./defaults";
+import { fillArray } from "./utils";
+
+import type { OrderComponents } from "../types";
+import type { EIP712TypeDefinitions } from "./defaults";
+
+const { bulkOrderType } = require("../../../eip-712-types/bulkOrder.js");
+
+function getBulkOrderTypes(height: number): EIP712TypeDefinitions {
+  const types = { ...bulkOrderType };
+  types.BulkOrder = [
+    { name: "tree", type: `OrderComponents${`[2]`.repeat(height)}` },
+  ];
+  return types;
+}
+
+export function getBulkOrderTreeHeight(length: number): number {
+  return Math.max(Math.ceil(Math.log2(length)), 1);
+}
+
+export function getBulkOrderTree(
+  orderComponents: OrderComponents[],
+  startIndex = 0,
+  height = getBulkOrderTreeHeight(orderComponents.length + startIndex)
+) {
+  const types = getBulkOrderTypes(height);
+  const defaultNode = DefaultGetter.from(types, "OrderComponents");
+  let elements = [...orderComponents];
+
+  if (startIndex > 0) {
+    elements = [
+      ...fillArray([] as OrderComponents[], startIndex, defaultNode),
+      ...orderComponents,
+    ];
+  }
+  const tree = new Eip712MerkleTree(
+    types,
+    "BulkOrder",
+    "OrderComponents",
+    elements,
+    height
+  );
+  return tree;
+}
+
+export function getBulkOrderTypeHash(height: number): string {
+  const types = getBulkOrderTypes(height);
+  const encoder = _TypedDataEncoder.from(types);
+  const typeString = toUtf8Bytes(encoder._types.BulkOrder);
+  return keccak256(typeString);
+}
+
+export function getBulkOrderTypeHashes(maxHeight: number): string[] {
+  const typeHashes: string[] = [];
+  for (let i = 0; i < maxHeight; i++) {
+    typeHashes.push(getBulkOrderTypeHash(i + 1));
+  }
+  return typeHashes;
+}
+----- End of eip712/bulk-orders.ts -----
+
+----- Begin of eip712/Eip712MerkleTree.ts -----
+import { _TypedDataEncoder as TypedDataEncoder } from "@ethersproject/hash";
+import { expect } from "chai";
+import {
+  defaultAbiCoder,
+  hexConcat,
+  keccak256,
+  toUtf8Bytes,
+} from "ethers/lib/utils";
+import { MerkleTree } from "merkletreejs";
+
+import { DefaultGetter } from "./defaults";
+import {
+  bufferKeccak,
+  bufferToHex,
+  chunk,
+  fillArray,
+  getRoot,
+  hexToBuffer,
+} from "./utils";
+
+import type { OrderComponents } from "../types";
+import type { EIP712TypeDefinitions } from "./defaults";
+
+type BulkOrderElements =
+  | [OrderComponents, OrderComponents]
+  | [BulkOrderElements, BulkOrderElements];
+
+const getTree = (leaves: string[], defaultLeafHash: string) =>
+  new MerkleTree(leaves.map(hexToBuffer), bufferKeccak, {
+    complete: true,
+    sort: false,
+    hashLeaves: false,
+    fillDefaultHash: hexToBuffer(defaultLeafHash),
+  });
+
+const encodeProof = (
+  key: number,
+  proof: string[],
+  signature = `0x${"ff".repeat(64)}`
+) => {
+  return hexConcat([
+    signature,
+    `0x${key.toString(16).padStart(6, "0")}`,
+    defaultAbiCoder.encode([`uint256[${proof.length}]`], [proof]),
+  ]);
+};
+
+export class Eip712MerkleTree<BaseType extends Record<string, any> = any> {
+  tree: MerkleTree;
+  private leafHasher: (value: any) => string;
+  defaultNode: BaseType;
+  defaultLeaf: string;
+  encoder: TypedDataEncoder;
+
+  get completedSize() {
+    return Math.pow(2, this.depth);
+  }
+
+  /** Returns the array of elements in the tree, padded to the complete size with empty items. */
+  getCompleteElements() {
+    const elements = this.elements;
+    return fillArray([...elements], this.completedSize, this.defaultNode);
+  }
+
+  /** Returns the array of leaf nodes in the tree, padded to the complete size with default hashes. */
+  getCompleteLeaves() {
+    const leaves = this.elements.map(this.leafHasher);
+    return fillArray([...leaves], this.completedSize, this.defaultLeaf);
+  }
+
+  get root() {
+    return this.tree.getHexRoot();
+  }
+
+  getProof(i: number) {
+    const leaves = this.getCompleteLeaves();
+    const leaf = leaves[i];
+    const proof = this.tree.getHexProof(leaf, i);
+    const root = this.tree.getHexRoot();
+    return { leaf, proof, root };
+  }
+
+  getEncodedProofAndSignature(i: number, signature: string) {
+    const { proof } = this.getProof(i);
+    return encodeProof(i, proof, signature);
+  }
+
+  getDataToSign(): BulkOrderElements {
+    let layer = this.getCompleteElements() as any;
+    while (layer.length > 2) {
+      layer = chunk(layer, 2);
+    }
+    return layer;
+  }
+
+  add(element: BaseType) {
+    this.elements.push(element);
+  }
+
+  getBulkOrderHash() {
+    const structHash = this.encoder.hashStruct("BulkOrder", {
+      tree: this.getDataToSign(),
+    });
+    const leaves = this.getCompleteLeaves().map(hexToBuffer);
+    const rootHash = bufferToHex(getRoot(leaves, false));
+    const typeHash = keccak256(toUtf8Bytes(this.encoder._types.BulkOrder));
+    const bulkOrderHash = keccak256(hexConcat([typeHash, rootHash]));
+
+    expect(bulkOrderHash, "derived bulk order hash should match").to.equal(
+      structHash
+    );
+
+    return structHash;
+  }
+
+  constructor(
+    public types: EIP712TypeDefinitions,
+    public rootType: string,
+    public leafType: string,
+    public elements: BaseType[],
+    public depth: number
+  ) {
+    const encoder = TypedDataEncoder.from(types);
+    this.encoder = encoder;
+    this.leafHasher = (leaf: BaseType) => encoder.hashStruct(leafType, leaf);
+    this.defaultNode = DefaultGetter.from(types, leafType);
+    this.defaultLeaf = this.leafHasher(this.defaultNode);
+    this.tree = getTree(this.getCompleteLeaves(), this.defaultLeaf);
+  }
+}
+----- End of eip712/Eip712MerkleTree.ts -----
+
+----- Begin of eip712/utils.ts -----
+import { hexConcat, hexlify, keccak256 } from "ethers/lib/utils";
+
+import type { BytesLike } from "ethers";
+
+export const makeArray = <T>(len: number, getValue: (i: number) => T) =>
+  Array(len)
+    .fill(0)
+    .map((_, i) => getValue(i));
+
+export const chunk = <T>(array: T[], size: number) => {
+  return makeArray(Math.ceil(array.length / size), (i) =>
+    array.slice(i * size, (i + 1) * size)
+  );
+};
+
+export const bufferToHex = (buf: Buffer) => hexlify(buf);
+
+export const hexToBuffer = (value: string) =>
+  Buffer.from(value.slice(2), "hex");
+
+export const bufferKeccak = (value: BytesLike) => hexToBuffer(keccak256(value));
+
+export const hashConcat = (arr: BytesLike[]) => bufferKeccak(hexConcat(arr));
+
+export const fillArray = <T>(arr: T[], length: number, value: T) => {
+  if (length > arr.length) arr.push(...Array(length - arr.length).fill(value));
+  return arr;
+};
+
+export const getRoot = (elements: (Buffer | string)[], hashLeaves = true) => {
+  if (elements.length === 0) throw new Error("empty tree");
+
+  const leaves = elements.map((e) => {
+    const leaf = Buffer.isBuffer(e) ? e : hexToBuffer(e);
+    return hashLeaves ? bufferKeccak(leaf) : leaf;
+  });
+
+  const layers: Buffer[][] = [leaves];
+
+  // Get next layer until we reach the root
+  while (layers[layers.length - 1].length > 1) {
+    layers.push(getNextLayer(layers[layers.length - 1]));
+  }
+
+  return layers[layers.length - 1][0];
+};
+
+export const getNextLayer = (elements: Buffer[]) => {
+  return chunk(elements, 2).map(hashConcat);
+  // return elements.reduce((layer: Buffer[], el, idx, arr) => {
+  // if (idx % 2 === 0) layer.push(hashConcat(el, arr[idx + 1]));
+  // return layer;
+  // }, []);
+};
+----- End of eip712/utils.ts -----
+
+----- Begin of encoding.ts -----
+import { expect } from "chai";
+import { randomBytes as nodeRandomBytes } from "crypto";
+import { BigNumber, constants, utils } from "ethers";
+import { getAddress, keccak256, toUtf8Bytes } from "ethers/lib/utils";
+
+import type {
+  BasicOrderParameters,
+  ConsiderationItem,
+  CriteriaResolver,
+  Fulfillment,
+  FulfillmentComponent,
+  OfferItem,
+  Order,
+  OrderComponents,
+} from "./types";
+import type { BigNumberish, ContractTransaction } from "ethers";
+
+const SeededRNG = require("./seeded-rng");
+
+const GAS_REPORT_MODE = process.env.REPORT_GAS;
+
+let randomBytes: (n: number) => string;
+if (GAS_REPORT_MODE) {
+  const srng = SeededRNG.create("gas-report");
+  randomBytes = srng.randomBytes;
+} else {
+  randomBytes = (n: number) => nodeRandomBytes(n).toString("hex");
+}
+
+export const randomHex = (bytes = 32) => `0x${randomBytes(bytes)}`;
+
+export const random128 = () => toBN(randomHex(16));
+
+const hexRegex = /[A-Fa-fx]/g;
+
+export const toHex = (n: BigNumberish, numBytes: number = 0) => {
+  const asHexString = BigNumber.isBigNumber(n)
+    ? n.toHexString().slice(2)
+    : typeof n === "string"
+    ? hexRegex.test(n)
+      ? n.replace(/0x/, "")
+      : Number(n).toString(16)
+    : Number(n).toString(16);
+  return `0x${asHexString.padStart(numBytes * 2, "0")}`;
+};
+
+export const baseFee = async (tx: ContractTransaction) => {
+  const data = tx.data;
+  const { gasUsed } = await tx.wait();
+  const bytes = toHex(data)
+    .slice(2)
+    .match(/.{1,2}/g) as string[];
+  const numZero = bytes.filter((b) => b === "00").length;
+  return (
+    gasUsed.toNumber() - (21000 + (numZero * 4 + (bytes.length - numZero) * 16))
+  );
+};
+
+export const randomBN = (bytes: number = 16) => toBN(randomHex(bytes));
+
+export const toBN = (n: BigNumberish) => BigNumber.from(toHex(n));
+
+export const toAddress = (n: BigNumberish) => getAddress(toHex(n, 20));
+
+export const toKey = (n: BigNumberish) => toHex(n, 32);
+
+export const convertSignatureToEIP2098 = (signature: string) => {
+  if (signature.length === 130) {
+    return signature;
+  }
+
+  expect(signature.length, "signature must be 64 or 65 bytes").to.eq(132);
+
+  return utils.splitSignature(signature).compact;
+};
+
+export const getBasicOrderParameters = (
+  basicOrderRouteType: number,
+  order: Order,
+  fulfillerConduitKey: string | boolean = false,
+  tips: { amount: BigNumber; recipient: string }[] = []
+): BasicOrderParameters => ({
+  offerer: order.parameters.offerer,
+  zone: order.parameters.zone,
+  basicOrderType: order.parameters.orderType + 4 * basicOrderRouteType,
+  offerToken: order.parameters.offer[0].token,
+  offerIdentifier: order.parameters.offer[0].identifierOrCriteria,
+  offerAmount: order.parameters.offer[0].endAmount,
+  considerationToken: order.parameters.consideration[0].token,
+  considerationIdentifier:
+    order.parameters.consideration[0].identifierOrCriteria,
+  considerationAmount: order.parameters.consideration[0].endAmount,
+  startTime: order.parameters.startTime,
+  endTime: order.parameters.endTime,
+  zoneHash: order.parameters.zoneHash,
+  salt: order.parameters.salt,
+  totalOriginalAdditionalRecipients: BigNumber.from(
+    order.parameters.consideration.length - 1
+  ),
+  signature: order.signature,
+  offererConduitKey: order.parameters.conduitKey,
+  fulfillerConduitKey: toKey(
+    typeof fulfillerConduitKey === "string" ? fulfillerConduitKey : 0
+  ),
+  additionalRecipients: [
+    ...order.parameters.consideration
+      .slice(1)
+      .map(({ endAmount, recipient }) => ({ amount: endAmount, recipient })),
+    ...tips,
+  ],
+});
+
+export const getOfferOrConsiderationItem = <
+  RecipientType extends string | undefined = undefined
+>(
+  itemType: number = 0,
+  token: string = constants.AddressZero,
+  identifierOrCriteria: BigNumberish = 0,
+  startAmount: BigNumberish = 1,
+  endAmount: BigNumberish = 1,
+  recipient?: RecipientType
+): RecipientType extends string ? ConsiderationItem : OfferItem => {
+  const offerItem: OfferItem = {
+    itemType,
+    token,
+    identifierOrCriteria: toBN(identifierOrCriteria),
+    startAmount: toBN(startAmount),
+    endAmount: toBN(endAmount),
+  };
+  if (typeof recipient === "string") {
+    return {
+      ...offerItem,
+      recipient: recipient as string,
+    } as ConsiderationItem;
+  }
+  return offerItem as any;
+};
+
+export const buildOrderStatus = (
+  ...arr: Array<BigNumber | number | boolean>
+) => {
+  const values = arr.map((v) => (typeof v === "number" ? toBN(v) : v));
+  return ["isValidated", "isCancelled", "totalFilled", "totalSize"].reduce(
+    (obj, key, i) => ({
+      ...obj,
+      [key]: values[i],
+      [i]: values[i],
+    }),
+    {}
+  );
+};
+
+export const getItemETH = (
+  startAmount: BigNumberish = 1,
+  endAmount: BigNumberish = 1,
+  recipient?: string
+) =>
+  getOfferOrConsiderationItem(
+    0,
+    constants.AddressZero,
+    0,
+    toBN(startAmount),
+    toBN(endAmount),
+    recipient
+  );
+
+export const getItem721 = (
+  token: string,
+  identifierOrCriteria: BigNumberish,
+  startAmount: number = 1,
+  endAmount: number = 1,
+  recipient?: string
+) =>
+  getOfferOrConsiderationItem(
+    2,
+    token,
+    identifierOrCriteria,
+    startAmount,
+    endAmount,
+    recipient
+  );
+
+export const toFulfillmentComponents = (
+  arr: number[][]
+): FulfillmentComponent[] =>
+  arr.map(([orderIndex, itemIndex]) => ({ orderIndex, itemIndex }));
+
+export const toFulfillment = (
+  offerArr: number[][],
+  considerationsArr: number[][]
+): Fulfillment => ({
+  offerComponents: toFulfillmentComponents(offerArr),
+  considerationComponents: toFulfillmentComponents(considerationsArr),
+});
+
+export const buildResolver = (
+  orderIndex: number,
+  side: 0 | 1,
+  index: number,
+  identifier: BigNumber,
+  criteriaProof: string[]
+): CriteriaResolver => ({
+  orderIndex,
+  side,
+  index,
+  identifier,
+  criteriaProof,
+});
+
+export const calculateOrderHash = (orderComponents: OrderComponents) => {
+  const offerItemTypeString =
+    "OfferItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount)";
+  const considerationItemTypeString =
+    "ConsiderationItem(uint8 itemType,address token,uint256 identifierOrCriteria,uint256 startAmount,uint256 endAmount,address recipient)";
+  const orderComponentsPartialTypeString =
+    "OrderComponents(address offerer,address zone,OfferItem[] offer,ConsiderationItem[] consideration,uint8 orderType,uint256 startTime,uint256 endTime,bytes32 zoneHash,uint256 salt,bytes32 conduitKey,uint256 counter)";
+  const orderTypeString = `${orderComponentsPartialTypeString}${considerationItemTypeString}${offerItemTypeString}`;
+
+  const offerItemTypeHash = keccak256(toUtf8Bytes(offerItemTypeString));
+  const considerationItemTypeHash = keccak256(
+    toUtf8Bytes(considerationItemTypeString)
+  );
+  const orderTypeHash = keccak256(toUtf8Bytes(orderTypeString));
+
+  const offerHash = keccak256(
+    "0x" +
+      orderComponents.offer
+        .map((offerItem) => {
+          return keccak256(
+            "0x" +
+              [
+                offerItemTypeHash.slice(2),
+                offerItem.itemType.toString().padStart(64, "0"),
+                offerItem.token.slice(2).padStart(64, "0"),
+                toBN(offerItem.identifierOrCriteria)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+                toBN(offerItem.startAmount)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+                toBN(offerItem.endAmount)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+              ].join("")
+          ).slice(2);
+        })
+        .join("")
+  );
+
+  const considerationHash = keccak256(
+    "0x" +
+      orderComponents.consideration
+        .map((considerationItem) => {
+          return keccak256(
+            "0x" +
+              [
+                considerationItemTypeHash.slice(2),
+                considerationItem.itemType.toString().padStart(64, "0"),
+                considerationItem.token.slice(2).padStart(64, "0"),
+                toBN(considerationItem.identifierOrCriteria)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+                toBN(considerationItem.startAmount)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+                toBN(considerationItem.endAmount)
+                  .toHexString()
+                  .slice(2)
+                  .padStart(64, "0"),
+                considerationItem.recipient.slice(2).padStart(64, "0"),
+              ].join("")
+          ).slice(2);
+        })
+        .join("")
+  );
+
+  const derivedOrderHash = keccak256(
+    "0x" +
+      [
+        orderTypeHash.slice(2),
+        orderComponents.offerer.slice(2).padStart(64, "0"),
+        orderComponents.zone.slice(2).padStart(64, "0"),
+        offerHash.slice(2),
+        considerationHash.slice(2),
+        orderComponents.orderType.toString().padStart(64, "0"),
+        toBN(orderComponents.startTime)
+          .toHexString()
+          .slice(2)
+          .padStart(64, "0"),
+        toBN(orderComponents.endTime).toHexString().slice(2).padStart(64, "0"),
+        orderComponents.zoneHash.slice(2),
+        orderComponents.salt.slice(2).padStart(64, "0"),
+        orderComponents.conduitKey.slice(2).padStart(64, "0"),
+        toBN(orderComponents.counter).toHexString().slice(2).padStart(64, "0"),
+      ].join("")
+  );
+
+  return derivedOrderHash;
+};
+
+export const getBasicOrderExecutions = (
+  order: Order,
+  fulfiller: string,
+  fulfillerConduitKey: string
+) => {
+  const { offerer, conduitKey, offer, consideration } = order.parameters;
+  const offerItem = offer[0];
+  const considerationItem = consideration[0];
+  const executions = [
+    {
+      item: {
+        ...offerItem,
+        amount: offerItem.endAmount,
+        recipient: fulfiller,
+      },
+      offerer,
+      conduitKey,
+    },
+    {
+      item: {
+        ...considerationItem,
+        amount: considerationItem.endAmount,
+      },
+      offerer: fulfiller,
+      conduitKey: fulfillerConduitKey,
+    },
+  ];
+  if (consideration.length > 1) {
+    for (const additionalRecipient of consideration.slice(1)) {
+      const execution = {
+        item: {
+          ...additionalRecipient,
+          amount: additionalRecipient.endAmount,
+        },
+        offerer: fulfiller,
+        conduitKey: fulfillerConduitKey,
+      };
+      if (additionalRecipient.itemType === offerItem.itemType) {
+        execution.offerer = offerer;
+        execution.conduitKey = conduitKey;
+        executions[0].item.amount = executions[0].item.amount.sub(
+          execution.item.amount
+        );
+      }
+      executions.push(execution);
+    }
+  }
+  return executions;
+};
+
+export const defaultBuyNowMirrorFulfillment = [
+  [[[0, 0]], [[1, 0]]],
+  [[[1, 0]], [[0, 0]]],
+  [[[1, 0]], [[0, 1]]],
+  [[[1, 0]], [[0, 2]]],
+].map(([offerArr, considerationArr]) =>
+  toFulfillment(offerArr, considerationArr)
+);
+
+export const defaultAcceptOfferMirrorFulfillment = [
+  [[[1, 0]], [[0, 0]]],
+  [[[0, 0]], [[1, 0]]],
+  [[[0, 0]], [[0, 1]]],
+  [[[0, 0]], [[0, 2]]],
+].map(([offerArr, considerationArr]) =>
+  toFulfillment(offerArr, considerationArr)
+);
+----- End of encoding.ts -----
+
