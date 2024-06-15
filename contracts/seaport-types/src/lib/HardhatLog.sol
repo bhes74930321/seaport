@@ -210,6 +210,21 @@ library HardhatLog {
         }
         console.log("=================================================");
     }
+
+    // struct OrderStatus {
+    //     bool isValidated;
+    //     bool isCancelled;
+    //     uint120 numerator;
+    //     uint120 denominator;
+    // }
+    function logOrderStatus(OrderStatus memory orderStatus) internal view {
+        console.log("================logOrderStatus===============");
+        console.log("isValidated: ", orderStatus.isValidated);
+        console.log("isCancelled: ", orderStatus.isCancelled);
+        console.log("numerator: ", orderStatus.numerator);
+        console.log("denominator: ", orderStatus.denominator);
+        console.log("=================================================");
+    }
 }
 
 

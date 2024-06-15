@@ -293,7 +293,7 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
         getTestItem1155(nftId, amount, amount, undefined),
         getTestItem1155(secondNftId, secondAmount, secondAmount),
       ];
-      //console.log("offer:", offer);
+      console.log("offer:", offer);
 
       const consideration = [
         getItemETH(parseEther("10"), parseEther("10"), seller.address),
@@ -314,7 +314,9 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
         ethers.constants.HashZero,
         conduitKeyOne
       );
-      //console.log("order:", order);
+      // console.log("----------------------------------");
+      // console.log(JSON.stringify(order, null, 2));
+      // console.log("----------------------------------");
 
 
       const { mirrorOrder, mirrorOrderHash } = await createMirrorBuyNowOrder(
@@ -322,7 +324,9 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
         zone,
         order
       );
-      //console.log("mirrorOrder:", mirrorOrder);
+      // console.log(JSON.stringify(mirrorOrder, null, 2));
+      // console.log("----------------------------------");
+      return;
 
       const fulfillments = [
         [[[0, 0]], [[1, 0]]],
@@ -345,7 +349,32 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
       );
       console.log("executions:", executions);
 
-      
+      expect(executions.length).to.equal(5);
+
+      const tx = marketplaceContract
+        .connect(owner)
+        .matchOrders([order, mirrorOrder], fulfillments, {
+          value,
+        });
+        const receipt = await (await tx).wait();
+        await checkExpectedEvents(
+          tx,
+          receipt,
+          [
+            {
+              order,
+              orderHash,
+              fulfiller: owner.address,
+            },
+            {
+              order: mirrorOrder,
+              orderHash: mirrorOrderHash,
+              fulfiller: owner.address,
+            },
+          ],
+          executions
+        );
+        return receipt;
 
     });
   });

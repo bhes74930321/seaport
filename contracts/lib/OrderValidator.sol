@@ -60,6 +60,7 @@ import {
 } from "../seaport-types/src/helpers/PointerLibraries.sol";
 
 import "hardhat/console.sol";
+import "../seaport-types/src/lib/HardhatLog.sol";
 
 /**
  * @title OrderValidator
@@ -171,6 +172,16 @@ contract OrderValidator is Executor, ZoneInteraction {
      *                        will be filled.
      * @return denominator    A value indicating the total size of the order.
      */
+    // 时间验证： 首先检查订单的有效期，确保当前时间在 startTime 和 endTime 之间。
+    // 分数验证： 检查订单完成分数 (numerator 和 denominator) 是否合法，包括：
+    // 分子不能超过分母。
+    // 分子不能为零。
+    // 如果是部分完成，则订单类型必须支持部分完成。
+    // 订单状态验证：
+    // 通过调用 _assertConsiderationLengthAndGetOrderHash 函数计算订单哈希，并获取订单状态。
+    // 检查订单是否已被取消或完全完成。
+    // 如果订单尚未验证，则验证签名。
+    // 更新订单状态： 根据提供的完成分数更新订单状态，包括已完成部分的分子和分母。
     function _validateOrder(
         AdvancedOrder memory advancedOrder,
         bool revertOnInvalid
@@ -265,6 +276,7 @@ contract OrderValidator is Executor, ZoneInteraction {
 
         // Retrieve the order status using the derived order hash.
         OrderStatus storage orderStatus = _orderStatus[orderHash];
+        HardhatLog.logOrderStatus(orderStatus);
 
         // Ensure order is fillable and is not cancelled.
         if (
@@ -284,6 +296,13 @@ contract OrderValidator is Executor, ZoneInteraction {
             );
         }
 
+        // advancedOrder 中的分子和分母代表的是 本次调用希望完成的订单比例。
+        // _orderStatus[orderHash] 存储的是 该订单已经被完成的比例。
+        // 假设一个订单的总量是 100，_orderStatus[orderHash] 中存储的分子和分母分别是 25 和 100，表示该订单已经被完成了 25%。
+        // 此时，用户 A 调用 fulfillAdvancedOrder 函数，传入的 advancedOrder 中分子和分母是 50 和 100，表示用户 A 希望完成该订单的 50%。
+        // 由于订单已经被完成了 25%，所以用户 A 最多只能完成剩余的 75%。
+        // 因此，最终用户 A 实际完成的订单比例是 75% * 50% = 37.5%，即完成 37.5 的数量。
+        // 最终确定 numerator 和 denominator 的值，代表本次调用实际完成的订单比例
         // Utilize assembly to determine the fraction to fill and update status.
         assembly {
             let orderStatusSlot := orderStatus.slot
