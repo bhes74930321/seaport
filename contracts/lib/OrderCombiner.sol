@@ -221,7 +221,6 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
         uint256 maximumFulfilled,
         address recipient
     ) internal returns (bytes32[] memory orderHashes, bool containsNonOpen) {
-        console.log("_validateOrdersAndPrepareToFulfill=====");
         // Ensure this function cannot be triggered during a reentrant call.
         _setReentrancyGuard(true); // Native tokens accepted during execution.
 
@@ -803,6 +802,7 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
         uint256 totalOrders = advancedOrders.length;
 
         // Initialize array for tracking available orders.
+        // 用来记录每个订单的完成状态
         bool[] memory availableOrders = new bool[](totalOrders);
 
         // Initialize an accumulator array. From this point forward, no new
@@ -810,8 +810,11 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
         // longer being utilized, as the accumulator operates in an open-ended
         // fashion from this memory pointer; existing memory may still be
         // accessed and modified, however.
+        // 用于收集要通过 Conduit 执行的代币转移操作
         bytes memory accumulator = new bytes(AccumulatorDisarmed);
 
+        // 对于每个执行操作，检查是否为零数量操作，如果不是，则调用 _transfer 函数执行代币转移
+        // 如果代币类型是原生代币 (ItemType.NATIVE)，则会检查当前合约的余额是否足够
         // Skip overflow check: loop index & executions length are both bounded.
         unchecked {
             // Determine the memory offset to terminate on during loops.
@@ -840,8 +843,9 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                     assembly {
                         // Ensure a sufficient native balance if relevant.
                         if and(
-                            iszero(mload(item)), // itemType == ItemType.NATIVE
+                            iszero(mload(item)), //  检查 item 的第一个字（即 itemType) 是否为零 itemType == ItemType.NATIVE
                             // item.amount > address(this).balance
+                            // 要转移的数量 (amount) 是否大于当前合约的原生代币余额 (selfbalance())
                             gt(amount, selfbalance())
                         ) {
                             // Store left-padded selector with push4,
@@ -921,6 +925,7 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                             );
 
                             // Transfer excess offer item amount to recipient.
+                            // 转移超过的item到recipient
                             _toOfferItemInput(_transfer)(
                                 offerItem,
                                 parameters.offerer,
@@ -992,7 +997,6 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
         // Trigger any accumulated transfers via call to the conduit.
         _triggerIfArmed(accumulator);
 
-        console.log("_performFinalChecksAndExecuteOrders===== 4444");
         // Determine whether any native token balance remains.
         uint256 remainingNativeTokenBalance;
         assembly {
@@ -1115,9 +1119,9 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
         Fulfillment[] memory fulfillments,
         address recipient
     ) internal returns (Execution[] memory /* executions */) {
-        HardhatLog.logAdvancedOrders(advancedOrders);
-        HardhatLog.logCriteriaResolvers(criteriaResolvers);
-        HardhatLog.logFulfillments(fulfillments);
+        // HardhatLog.logAdvancedOrders(advancedOrders);
+        // HardhatLog.logCriteriaResolvers(criteriaResolvers);
+        // HardhatLog.logFulfillments(fulfillments);
         // Create a `true` boolean variable to indicate that invalid orders
         // should revert. Does not use a constant to avoid function
         // specialization in solc that would increase contract size.
@@ -1201,6 +1205,7 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
                 );
             }
         }
+        HardhatLog.logExecutions(executions);
 
         // Perform final checks and execute orders.
         _performFinalChecksAndExecuteOrders(

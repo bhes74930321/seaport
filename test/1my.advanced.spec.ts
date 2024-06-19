@@ -260,6 +260,7 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
     });
 
     it("Contract Orders (with conduit)", async () => {
+      return;
       const tempConduitKey = owner.address + "ff00000000000000000000f1";
       const { conduit: tempConduitAddress, exists: isConduitExist } = await conduitController.getConduit(
         tempConduitKey
@@ -326,7 +327,6 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
       );
       // console.log(JSON.stringify(mirrorOrder, null, 2));
       // console.log("----------------------------------");
-      return;
 
       const fulfillments = [
         [[[0, 0]], [[1, 0]]],
@@ -377,5 +377,131 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
         return receipt;
 
     });
+
+    it("Criteria-based offer item ERC1155 (match)", async () => {
+      // Seller mints nfts
+      const { nftId } = await mint1155(seller, undefined, undefined, 1, 1000);
+  
+      // Seller approves marketplace contract to transfer NFTs
+      await set1155ApprovalForAll(seller, marketplaceContract.address, true);
+  
+      const { root, proofs } = merkleTree([nftId]);
+  
+      const offer = [getTestItem1155WithCriteria(root, toBN(1), toBN(1))];
+      console.log("---------------offer-------------------")
+      console.log(JSON.stringify(offer, null, 2));
+  
+      const consideration = [
+        getItemETH(parseEther("10"), parseEther("10"), seller.address),
+        getItemETH(parseEther("1"), parseEther("1"), zone.address),
+        getItemETH(parseEther("1"), parseEther("1"), owner.address),
+      ];
+      console.log("---------------consideration-------------------")
+      console.log(JSON.stringify(consideration, null, 2));
+      
+  
+      const criteriaResolvers = [
+        buildResolver(0, 0, 0, nftId, proofs[nftId.toString()]),
+      ];
+      console.log("----------------criteriaResolvers------------------")
+      console.log(JSON.stringify(criteriaResolvers, null, 2));
+  
+      const { order, orderHash, value } = await createOrder(
+        seller,
+        zone,
+        offer,
+        consideration,
+        0, // FULL_OPEN
+        criteriaResolvers
+      );
+      console.log("----------------order------------------")
+      console.log(JSON.stringify(order, null, 2));
+      console.log("----------------orderHash------------------")
+      console.log(JSON.stringify(orderHash, null, 2));
+      console.log("----------------value------------------")
+      console.log(JSON.stringify(value, null, 2));
+  
+      const { mirrorOrder, mirrorOrderHash } =
+        await createMirrorAcceptOfferOrder(
+          buyer,
+          zone,
+          order,
+          criteriaResolvers
+        );
+      console.log("----------------mirrorOrder------------------")
+      console.log(JSON.stringify(mirrorOrder, null, 2));
+  
+      //[[[offerOrderIndex, offerItemIndex]], [[considerationOrderIndex, considerationItemIndex]]]
+      // [[[1, 0]], [[0, 0]]], // 镜像订单的第0项报价 (10 ETH) 与 订单的第0项对价 (ERC1155 代币) 匹配
+      // [[[0, 0]], [[1, 0]]], // 订单的第0项报价 (ERC1155 代币) 与 镜像订单的第0项对价 (10 ETH) 匹配
+      // [[[1, 1]], [[0, 1]]], // 镜像订单的第1项报价 (1 ETH) 与 订单的第1项对价 (1 ETH) 匹配
+      // [[[1, 2]], [[0, 2]]], // 镜像订单的第2项报价 (1 ETH) 与 订单的第2项对价 (1 ETH) 匹配
+      const fulfillments = [
+        [[[1, 0]], [[0, 0]]],
+        [[[0, 0]], [[1, 0]]],
+        [[[1, 1]], [[0, 1]]],
+        [[[1, 2]], [[0, 2]]],
+      ].map(([offerArr, considerationArr]) =>
+        toFulfillment(offerArr, considerationArr)
+      );
+  
+      const executions = await simulateAdvancedMatchOrders(
+        marketplaceContract,
+        [order, mirrorOrder],
+        criteriaResolvers,
+        fulfillments,
+        owner,
+        value
+      );
+  
+      expect(executions.length).to.equal(4);
+  
+      const tx = marketplaceContract
+        .connect(owner)
+        .matchAdvancedOrders(
+          [order, mirrorOrder],
+          criteriaResolvers,
+          fulfillments,
+          ethers.constants.AddressZero,
+          {
+            value,
+          }
+        );
+      const receipt = await (await tx).wait();
+      await checkExpectedEvents(
+        tx,
+        receipt,
+        [
+          {
+            order,
+            orderHash,
+            fulfiller: owner.address,
+          },
+          {
+            order: mirrorOrder,
+            orderHash: mirrorOrderHash,
+            fulfiller: owner.address,
+          },
+        ],
+        executions,
+        criteriaResolvers
+      );
+      return receipt;
+    });
   });
 });
+
+// enum ItemType {
+//   // 0: ETH on mainnet, MATIC on polygon, etc.
+//   NATIVE,
+//   // 1: ERC20 items (ERC777 and ERC20 analogues could also technically work)
+//   ERC20,
+//   // 2: ERC721 items
+//   ERC721,
+//   // 3: ERC1155 items
+//   ERC1155,
+//   // 4: ERC721 items where a number of tokenIds are supported
+//   ERC721_WITH_CRITERIA,
+//   // 5: ERC1155 items where a number of ids are supported
+//   ERC1155_WITH_CRITERIA
+// }

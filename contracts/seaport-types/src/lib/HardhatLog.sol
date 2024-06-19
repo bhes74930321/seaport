@@ -225,6 +225,42 @@ library HardhatLog {
         console.log("denominator: ", orderStatus.denominator);
         console.log("=================================================");
     }
+
+    // struct ReceivedItem {
+    //     ItemType itemType;
+    //     address token;
+    //     uint256 identifier;
+    //     uint256 amount;
+    //     address payable recipient;
+    // }
+    // struct Execution {
+    //     ReceivedItem item;
+    //     address offerer;
+    //     bytes32 conduitKey;
+    // }
+    function logReceivedItem(ReceivedItem memory receivedItem) internal view {
+        console.log("-------------------logReceivedItem:------------------");
+        logItemType("itemType: ", receivedItem.itemType);
+        console.log("token: ", receivedItem.token);
+        console.log("identifier: ", receivedItem.identifier);
+        console.log("amount: ", receivedItem.amount);
+        console.log("recipient: ", receivedItem.recipient);
+        console.log("-------------------  ------------------");
+    }
+    function logExecution(Execution memory execution) internal view {
+        console.log("===================logExecution===================");
+        logReceivedItem(execution.item);
+        console.log("offerer: ", execution.offerer);
+        logBytes32("conduitKey: ", execution.conduitKey);
+        console.log("===========================================");
+    }
+    function logExecutions(Execution[] memory executions) internal view {
+        console.log("===================logExecutions===================");
+        console.log("executions.length: ", executions.length);
+        for (uint i = 0; i < executions.length; i++) {
+            logExecution(executions[i]);
+        }
+    }
 }
 
 
