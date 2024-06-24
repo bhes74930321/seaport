@@ -1,0 +1,91 @@
+{
+    "parameters": {
+      "offerer": "0x87A50Ae7DcE700f06863B3d050a65bED33734501",
+      "zone": "0x16E845c27cD969d6A04D4deBEFb9f63e224001D4",
+      "offer": [
+        {
+          "itemType": 5,
+          "token": "0xF83Ea0845Fe4bF569aEF860df02d551137A5a084",
+          "identifierOrCriteria": {
+            "type": "BigNumber",
+            "hex": "0xb10e2d527612073b26eecdfd717e6a320cf44b4afac2b0732d9fcbe2b7fa0cf6"
+          },
+          "startAmount": {
+            "type": "BigNumber",
+            "hex": "0x01"
+          },
+          "endAmount": {
+            "type": "BigNumber",
+            "hex": "0x01"
+          }
+        }
+      ],
+      "consideration": [
+        {
+          "itemType": 0,
+          "token": "0x0000000000000000000000000000000000000000",
+          "identifierOrCriteria": {
+            "type": "BigNumber",
+            "hex": "0x00"
+          },
+          "startAmount": {
+            "type": "BigNumber",
+            "hex": "0x8ac7230489e80000"
+          },
+          "endAmount": {
+            "type": "BigNumber",
+            "hex": "0x8ac7230489e80000"
+          },
+          "recipient": "0x87A50Ae7DcE700f06863B3d050a65bED33734501"
+        },
+        {
+          "itemType": 0,
+          "token": "0x0000000000000000000000000000000000000000",
+          "identifierOrCriteria": {
+            "type": "BigNumber",
+            "hex": "0x00"
+          },
+          "startAmount": {
+            "type": "BigNumber",
+            "hex": "0x0de0b6b3a7640000"
+          },
+          "endAmount": {
+            "type": "BigNumber",
+            "hex": "0x0de0b6b3a7640000"
+          },
+          "recipient": "0x16E845c27cD969d6A04D4deBEFb9f63e224001D4"
+        },
+        {
+          "itemType": 0,
+          "token": "0x0000000000000000000000000000000000000000",
+          "identifierOrCriteria": {
+            "type": "BigNumber",
+            "hex": "0x00"
+          },
+          "startAmount": {
+            "type": "BigNumber",
+            "hex": "0x0de0b6b3a7640000"
+          },
+          "endAmount": {
+            "type": "BigNumber",
+            "hex": "0x0de0b6b3a7640000"
+          },
+          "recipient": "0xD21aaaDDCf0Dd32807DC2898a8Aa579e482AF028"
+        }
+      ],
+      "totalOriginalConsiderationItems": 3,
+      "orderType": 0,
+      "zoneHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "salt": "0x692075cda2c8281ffe4ffbcc9d16fb7ae14abd3247a4aec4c76d118a0170896e",
+      "conduitKey": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "startTime": 0,
+      "endTime": {
+        "type": "BigNumber",
+        "hex": "0xff00000000000000000000000000"
+      }
+    },
+    "signature": "0x3ffe07c40fb01ea6c752d1f3fb149c7bdea54bf7f9f37c326b9f4ef2baa679733cc86c554ebdb375556380d5bf92f46da914eb386c15a9e4013d6b2e665148921b",
+    "numerator": 1,
+    "denominator": 1,
+    "extraData": "0x"
+  }

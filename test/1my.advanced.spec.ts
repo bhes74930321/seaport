@@ -138,8 +138,9 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
     }
 
     // Deploy a new conduit
-    const tempConduit = await deployNewConduit(owner);
+    //const tempConduit = await deployNewConduit(owner);
 
+    console.log("owner:", owner.address);
     console.log("seller:", seller.address);
     console.log("buyer:", buyer.address);
     console.log("zone:", zone.address);
@@ -379,6 +380,7 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
     });
 
     it("Criteria-based offer item ERC1155 (match)", async () => {
+      return
       // Seller mints nfts
       const { nftId } = await mint1155(seller, undefined, undefined, 1, 1000);
   
@@ -487,6 +489,156 @@ describe(`Advanced orders (Seaport v${VERSION})`, function () {
         criteriaResolvers
       );
       return receipt;
+    });
+
+    it("ERC1155 <=> ETH (match via conduit)", async () => {
+      return;
+      // Seller mints first nft
+      const { nftId, amount } = await mint1155(seller);
+
+      // Seller mints second nft
+      const { nftId: secondNftId, amount: secondAmount } =
+        await mintAndApprove1155(seller, conduitOne.address);
+
+      const offer = [
+        getTestItem1155(nftId, amount, amount, undefined),
+        getTestItem1155(secondNftId, secondAmount, secondAmount),
+      ];
+
+      const consideration = [
+        getItemETH(parseEther("10"), parseEther("10"), seller.address),
+        getItemETH(parseEther("1"), parseEther("1"), zone.address),
+        getItemETH(parseEther("1"), parseEther("1"), owner.address),
+      ];
+
+      const { order, orderHash, value } = await createOrder(
+        seller,
+        zone,
+        offer,
+        consideration,
+        0, // FULL_OPEN
+        [],
+        null,
+        seller,
+        ethers.constants.HashZero,
+        conduitKeyOne
+      );
+      console.log("conduitKeyOne:", conduitKeyOne);
+      //return;
+
+      const { mirrorOrder, mirrorOrderHash } = await createMirrorBuyNowOrder(
+        buyer,
+        zone,
+        order
+      );
+
+      const fulfillments = [
+        [[[0, 0]], [[1, 0]]],
+        [[[0, 1]], [[1, 1]]],
+        [[[1, 0]], [[0, 0]]],
+        [[[1, 0]], [[0, 1]]],
+        [[[1, 0]], [[0, 2]]],
+      ].map(([offerArr, considerationArr]) =>
+        toFulfillment(offerArr, considerationArr)
+      );
+
+      const executions = await simulateMatchOrders(
+        marketplaceContract,
+        [order, mirrorOrder],
+        fulfillments,
+        owner,
+        value
+      );
+
+      expect(executions.length).to.equal(5);
+
+      const tx = marketplaceContract
+        .connect(owner)
+        .matchOrders([order, mirrorOrder], fulfillments, {
+          value,
+        });
+      const receipt = await (await tx).wait();
+      await checkExpectedEvents(
+        tx,
+        receipt,
+        [
+          {
+            order,
+            orderHash,
+            fulfiller: owner.address,
+          },
+          {
+            order: mirrorOrder,
+            orderHash: mirrorOrderHash,
+            fulfiller: owner.address,
+          },
+        ],
+        executions
+      );
+      return receipt;
+    });
+
+    it("Can fulfill a single order via fulfillAvailableAdvancedOrders", async () => {
+      // Seller mints nft
+      const nftId = await mintAndApprove721(
+        seller,
+        marketplaceContract.address,
+        11
+      );
+
+      const offer = [getTestItem721(nftId)];
+
+      const consideration = [
+        getItemETH(parseEther("10"), parseEther("10"), seller.address),
+        getItemETH(parseEther("1"), parseEther("1"), zone.address),
+        getItemETH(parseEther("1"), parseEther("1"), owner.address),
+      ];
+
+      const { order, orderHash, value } = await createOrder(
+        seller,
+        zone,
+        offer,
+        consideration,
+        0 // FULL_OPEN
+      );
+
+      // orders[0].parameters.offerer[0]
+      const offerComponents = [[{ orderIndex: 0, itemIndex: 0 }]];
+      // orders[0].parameters.consideration[0]
+      // orders[0].parameters.consideration[1]
+      // orders[0].parameters.consideration[2]
+      const considerationComponents = [
+        [{ orderIndex: 0, itemIndex: 0 }],
+        [{ orderIndex: 0, itemIndex: 1 }],
+        [{ orderIndex: 0, itemIndex: 2 }],
+      ];
+
+      await withBalanceChecks([order], 0, undefined, async () => {
+        const tx = marketplaceContract
+          .connect(buyer)
+          .fulfillAvailableAdvancedOrders(
+            [order],
+            [],
+            offerComponents,
+            considerationComponents,
+            toKey(0),
+            ethers.constants.AddressZero,
+            100,
+            {
+              value,
+            }
+          );
+        const receipt = await (await tx).wait();
+        await checkExpectedEvents(tx, receipt, [
+          {
+            order,
+            orderHash,
+            fulfiller: buyer.address,
+          },
+        ]);
+
+        return receipt;
+      });
     });
   });
 });

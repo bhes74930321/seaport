@@ -49,6 +49,7 @@ contract Conduit is ConduitInterface, TokenTransferrer {
      * @notice Ensure that the caller is currently registered as an open channel
      *         on the conduit.
      */
+    //_channels[caller()] 没有值就表示channel没有open
     modifier onlyOpenChannel() {
         // Utilize assembly to access channel storage mapping directly.
         assembly {
@@ -123,6 +124,7 @@ contract Conduit is ConduitInterface, TokenTransferrer {
         }
 
         // Return a magic value indicating that the transfers were performed.
+        // 返回execute.selector可以表示哪个函数执行成功
         magicValue = this.execute.selector;
     }
 

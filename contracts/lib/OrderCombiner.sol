@@ -154,6 +154,9 @@ contract OrderCombiner is OrderFulfiller, FulfillmentApplier {
             Execution[] memory /* executions */
         )
     {
+        // console.log("============advancedOrders.length===============");
+        // console.log(advancedOrders.length);
+        // HardhatLog.logAdvancedOrders(advancedOrders);
         // Create a `false` boolean variable to indicate that invalid orders
         // should NOT revert. Does not use a constant to avoid function
         // specialization in solc that would increase contract size.

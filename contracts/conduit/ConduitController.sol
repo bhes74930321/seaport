@@ -86,6 +86,7 @@ contract ConduitController is ConduitControllerInterface {
             )
         );
 
+        //表示conduit已经部署
         // If derived conduit exists, as evidenced by comparing runtime code...
         if (conduit.codehash == _CONDUIT_RUNTIME_CODE_HASH) {
             // Revert with an error indicating that the conduit already exists.

@@ -306,6 +306,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
             // Declare a variable for the hash of itemType, token, & identifier.
             let dataHash
 
+            // 遍历offerComponents
             // Iterate over each offer component.
             for {
                 // Create variable to track position in offerComponents head.
@@ -322,6 +323,8 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                 // Increment position in considerationComponents head.
                 fulfillmentHeadPtr := add(fulfillmentHeadPtr, OneWord)
 
+                // mload(fulfillmentHeadPtr)) 读取offerComponents[i].index
+                // 读取offerComponents[i].index 判断index是否小于advancedOrders.length
                 // Ensure that the order index is not out of range.
                 if iszero(
                     lt(mload(mload(fulfillmentHeadPtr)), mload(advancedOrders))
@@ -329,6 +332,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     throwInvalidFulfillmentComponentData()
                 }
 
+                // 读取advancedOrders[orderIndex]
                 // Read advancedOrders[orderIndex] pointer from its array head.
                 let orderPtr := mload(
                     // Calculate head position of advancedOrders[orderIndex]
@@ -338,9 +342,11 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     )
                 )
 
+                // 读取advancedOrders[orderIndex].OrderParameters
                 // Read the pointer to OrderParameters from the AdvancedOrder.
                 let paramsPtr := mload(orderPtr)
 
+                // 读取offerComponents[i].itemIndex
                 // Retrieve item index using an offset of fulfillment pointer.
                 let itemIndex := mload(
                     add(mload(fulfillmentHeadPtr), Fulfillment_itemIndex_offset)
@@ -348,6 +354,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
 
                 let offerItemPtr
                 {
+                    // 读取advancedOrders[orderIndex].OrderParameters.offerArr的pointer
                     // Load the offer array pointer.
                     let offerArrPtr := mload(
                         add(paramsPtr, OrderParameters_offer_head_offset)
@@ -356,14 +363,15 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     // If the offer item index is out of range or the numerator
                     // is zero, skip this item.
                     if or(
-                        iszero(lt(itemIndex, mload(offerArrPtr))),
+                        iszero(lt(itemIndex, mload(offerArrPtr))), // itemIndex >= offerArr.length
                         iszero(
-                            mload(add(orderPtr, AdvancedOrder_numerator_offset))
+                            mload(add(orderPtr, AdvancedOrder_numerator_offset)) // numerator == 0
                         )
                     ) {
                         continue
                     }
 
+                    // 读取offerArr[i]
                     // Retrieve offer item pointer using the item index.
                     offerItemPtr := mload(
                         add(
@@ -377,12 +385,15 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
 
                 // Declare a separate scope for the amount update.
                 {
+                    // 读取offerArr[i].amount
                     // Retrieve amount pointer using consideration item pointer.
                     let amountPtr := add(offerItemPtr, Common_amount_offset)
 
+                    // amount累加
                     // Add offer item amount to execution amount.
                     let newAmount := add(amount, mload(amountPtr))
 
+                    // 记录错误 
                     // Update error buffer:
                     // 1 = zero amount, 2 = overflow, 3 = both.
                     errorBuffer := or(
@@ -393,9 +404,11 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                         )
                     )
 
+                    // 更新总数量
                     // Update the amount to the new, summed amount.
                     amount := newAmount
 
+                    // 将原始提供项的数量设为零，表示其已被处理
                     // Zero out amount on original item to indicate it is spent.
                     mstore(amountPtr, 0)
                 }
@@ -404,26 +417,30 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                 let receivedItem := mload(execution)
 
                 // Check if this is the first valid fulfillment item.
-                switch iszero(dataHash)
+                switch iszero(dataHash) //if (dataHash == bytes32(0))
                 case 1 {
                     // On first valid item, populate the received item in memory
                     // for later comparison.
 
+                    // 就是execution.item.itemType = offerItem.itemType;
                     // Set the item type on the received item.
                     mstore(receivedItem, mload(offerItemPtr))
 
+                    // execution.item.token = offerItem.token;
                     // Set the token on the received item.
                     mstore(
                         add(receivedItem, Common_token_offset),
                         mload(add(offerItemPtr, Common_token_offset))
                     )
 
+                    // execution.item.identifier = offerItem.identifier;
                     // Set the identifier on the received item.
                     mstore(
                         add(receivedItem, Common_identifier_offset),
                         mload(add(offerItemPtr, Common_identifier_offset))
                     )
 
+                    // execution.item.recipient = recipient;
                     // Set the recipient on the received item.
                     mstore(
                         add(receivedItem, ReceivedItem_recipient_offset),
@@ -431,18 +448,22 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     )
 
                     // Set offerer on returned execution using order pointer.
+                    // execution.offerer = params.offerer;
                     mstore(
                         add(execution, Execution_offerer_offset),
                         mload(paramsPtr)
                     )
 
                     // Set execution conduitKey via order pointer offset.
+                    // 通过订单指针偏移量设置执行的 conduitKey
+                    // execution.conduitKey = params.conduitKey;
                     mstore(
                         add(execution, Execution_conduit_offset),
                         mload(add(paramsPtr, OrderParameters_conduit_offset))
                     )
 
                     // Calculate the hash of (itemType, token, identifier).
+                    // 计算 (itemType, token, identifier) 的哈希值
                     dataHash := keccak256(
                         receivedItem,
                         ReceivedItem_CommonParams_size
@@ -451,6 +472,8 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     // If component index > 0, swap component pointer with
                     // pointer to first component so that any remainder after
                     // fulfillment can be added back to the first item.
+                    // 如果组件索引大于 0，则将当前组件指针与第一个组件指针交换，
+                    // 以便在履行后将任何剩余部分添加回第一个项目。
                     let firstFulfillmentHeadPtr := add(offerComponents, OneWord)
                     if xor(firstFulfillmentHeadPtr, fulfillmentHeadPtr) {
                         let fulfillmentPtr := mload(fulfillmentHeadPtr)
@@ -461,11 +484,13 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     // Compare every subsequent item to the first.
                     if or(
                         or(
+                            // 检查提供者offer是否匹配
                             // The offerer must match on both items.
                             xor(
                                 mload(paramsPtr),
                                 mload(add(execution, Execution_offerer_offset))
                             ),
+                            // 检查 conduitKey 是否匹配
                             // The conduit key must match on both items.
                             xor(
                                 mload(
@@ -477,6 +502,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                                 mload(add(execution, Execution_conduit_offset))
                             )
                         ),
+                        // 检查 itemType、token 和 identifier 是否匹配
                         // The itemType, token, and identifier must match.
                         xor(
                             dataHash,
@@ -486,6 +512,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                             )
                         )
                     ) {
+                        // 如果任何要求不满足，则抛出错误
                         // Throw if any of the requirements are not met.
                         throwInvalidFulfillmentComponentData()
                     }
@@ -493,16 +520,20 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
             }
 
             // Write final amount to execution.
+            // 将最终数量写入执行
             mstore(add(mload(execution), Common_amount_offset), amount)
 
             // Determine whether the error buffer contains a nonzero error code.
+            // 检查错误缓冲区是否包含非零错误代码
             if errorBuffer {
                 // If errorBuffer is 1, an item had an amount of zero.
                 if eq(errorBuffer, 1) {
                     // Store left-padded selector with push4 (reduces bytecode)
                     // mem[28:32] = selector
+                    // 如果错误缓冲区为 1，则表示某个项目数量为零
                     mstore(0, MissingItemAmount_error_selector)
 
+                    // 如果错误缓冲区不是 1 或 0，则表示累加时发生溢出
                     // revert(abi.encodeWithSignature("MissingItemAmount()"))
                     revert(
                         Error_selector_offset,
@@ -574,13 +605,13 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
         // Utilize assembly in order to efficiently aggregate the items.
         assembly {
             // Declare a variable for the final aggregated item amount.
-            let amount
+            let amount // 聚合的总金额
 
             // Create variable to track errors encountered with amount.
-            let errorBuffer
+            let errorBuffer // 用于跟踪处理金额时遇到的错误
 
             // Declare variable for hash(itemType, token, identifier, recipient)
-            let dataHash
+            let dataHash // 用于存储 (itemType, token, identifier, recipient) 的哈希值
 
             // Iterate over each consideration component.
             for {
