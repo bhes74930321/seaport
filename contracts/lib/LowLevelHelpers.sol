@@ -33,6 +33,7 @@ contract LowLevelHelpers {
      *      data was returned by the last call and that the size of that data
      *      does not exceed the currently allocated memory size.
      */
+     //如果上一次调用返回了数据，并且该数据的大小不超过当前分配的内存大小，则回退并传递回退原因。这是一种通用的错误处理机制，用于将底层调用的错误信息传递给上层调用者
     function _revertWithReasonIfOneIsReturned() internal view {
         assembly {
             // If it returned a message, bubble it up as long as sufficient gas
@@ -96,6 +97,7 @@ contract LowLevelHelpers {
      *
      * @return updatedRecipient The updated recipient.
      */
+     //如果提供的接收者地址为零，则使用调用者地址代替；否则使用提供的接收者地址。这通常用于处理订单中没有明确指定接收者的对价项目
     function _substituteCallerForEmptyRecipient(
         address recipient
     ) internal view returns (address updatedRecipient) {
@@ -113,6 +115,7 @@ contract LowLevelHelpers {
      *
      * @return u The `uint256` value.
      */
+     //将布尔值 (bool) 转换为无符号整数 (uint256)
     function _cast(bool b) internal pure returns (uint256 u) {
         assembly {
             u := b
@@ -126,6 +129,7 @@ contract LowLevelHelpers {
      *      `AdvancedOrder` whose pointer is stored at that offset from the
      *      array length.
      */
+    //将 MemoryPointerLib.pptrOffset 函数转换为一个新的函数，该函数接受一个 AdvancedOrder 内存数组和一个内存
     function _getReadAdvancedOrderByOffset()
         internal
         pure
@@ -185,6 +189,7 @@ contract LowLevelHelpers {
      *
      *      Note: assumes the calldatasize is non-zero.
      */
+     //返回一个 true 值，但 Solidity 编译器不会将其识别为编译时常量。这用于绕过 Solidity 函数特化机制，该机制会根据输入参数的常量值生成不同的函数版本，导致合约大小增加
     function _runTimeConstantTrue() internal pure returns (bool) {
         return msg.data.length > 0;
     }

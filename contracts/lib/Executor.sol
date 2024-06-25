@@ -356,6 +356,7 @@ contract Executor is Verifiers, TokenTransferrer {
      *                    signifies that no conduit should be used, with direct
      *                    approvals set on this contract.
      */
+     //如果累积器 (accumulator) 中有待执行的转移操作 (即“已激活”)，并且提供的 conduitKey 与累积器中保存的密钥不匹配，则触发调用管道执行累积的转移操作。
     function _triggerIfArmedAndNotAccumulatable(
         bytes memory accumulator,
         bytes32 conduitKey
@@ -377,6 +378,7 @@ contract Executor is Verifiers, TokenTransferrer {
      * @param accumulator An open-ended array that collects transfers to execute
      *                    against a given conduit in a single call.
      */
+     //如果累积器 (accumulator) 中有待执行的转移操作 (即“已激活”)，则触发调用管道执行累积的转移操作
     function _triggerIfArmed(bytes memory accumulator) internal {
         // Exit if the accumulator is not "armed".
         if (accumulator.length != AccumulatorArmed) {
@@ -402,6 +404,7 @@ contract Executor is Verifiers, TokenTransferrer {
      * @param accumulator An open-ended array that collects transfers to execute
      *                    against a given conduit in a single call.
      */
+     //调用与 conduitKey 对应的管道，并提供所有累积的项目转移信息。在调用过程中，累积器会被“解除激活”并重置。
     function _trigger(bytes32 conduitKey, bytes memory accumulator) internal {
         // Declare variables for offset in memory & size of calldata to conduit.
         uint256 callDataOffset;
@@ -444,6 +447,7 @@ contract Executor is Verifiers, TokenTransferrer {
      * @param callDataOffset The memory pointer where calldata is contained.
      * @param callDataSize   The size of calldata in memory.
      */
+     //根据内存中 calldata 的偏移量和大小，调用与 conduitKey 对应的管道
     function _callConduitUsingOffsets(
         bytes32 conduitKey,
         uint256 callDataOffset,
@@ -500,6 +504,7 @@ contract Executor is Verifiers, TokenTransferrer {
      * @return accumulatorConduitKey The conduit key currently set for the
      *                               accumulator.
      */
+     //获取累积器 (accumulator) 中当前设置的管道密钥。
     function _getAccumulatorConduitKey(
         bytes memory accumulator
     ) internal pure returns (bytes32 accumulatorConduitKey) {
@@ -529,6 +534,12 @@ contract Executor is Verifiers, TokenTransferrer {
      * @param identifier  The tokenId to transfer.
      * @param amount      The amount to transfer.
      */
+     //将一个项目转移操作添加到累积器 (accumulator) 中，以便在一次调用管道时批量执行。
+    // “激活”状态: 每添加一个转账操作，_insert 函数都会检查累积器的状态。如果累积器处于“未激活”状态，它会：
+    // 将累积器的状态设置为 “已激活” (AccumulatorArmed)，表示累积器中现在有待执行的操作。
+    // 将管道密钥 (conduitKey) 保存到累积器中。
+    // 将管道函数选择器 (ConduitInterface.execute.selector) 保存到累积器中。
+    // 初始化累积器中用于存储转账操作的数组的长度和偏移量。
     function _insert(
         bytes32 conduitKey,
         bytes memory accumulator,

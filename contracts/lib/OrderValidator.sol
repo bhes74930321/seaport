@@ -68,6 +68,7 @@ import "../seaport-types/src/lib/HardhatLog.sol";
  * @notice OrderValidator contains functionality related to validating orders
  *         and updating their status.
  */
+ //验证订单并更新订单状态。它包含了用于检查订单是否可履行、是否已取消、是否已部分或完全履行，以及验证订单签名的函数
 contract OrderValidator is Executor, ZoneInteraction {
     // Track status of each order (validated, cancelled, and fraction filled).
     mapping(bytes32 => OrderStatus) private _orderStatus;
@@ -93,6 +94,7 @@ contract OrderValidator is Executor, ZoneInteraction {
      *
      * @param orderHash The hash of the order.
      */
+     //验证基本订单的有效性，并返回订单状态
     function _validateBasicOrder(
         bytes32 orderHash
     ) internal view returns (OrderStatus storage orderStatus) {
@@ -144,6 +146,7 @@ contract OrderValidator is Executor, ZoneInteraction {
      *
      * @param orderStatus A storage pointer referencing the order status.
      */
+     //更新基本订单的状态，假设所有验证都已执行。它将订单状态更新为已验证、未取消和已完全履行。
     function _updateBasicOrderStatus(OrderStatus storage orderStatus) internal {
         // Utilize assembly to efficiently update the order status.
         assembly {
@@ -172,6 +175,13 @@ contract OrderValidator is Executor, ZoneInteraction {
      *                        will be filled.
      * @return denominator    A value indicating the total size of the order.
      */
+    // 验证订单，确定要履行的部分，并更新其状态。所需的履行量以分数形式提供，返回的要履行的量也是如此
+    // advancedOrder: 要履行的订单以及要履行的部分。注意，所有提供和考虑的数量必须可以被提供的分数整除，才能使部分履行有效。
+    // revertOnInvalid: 一个布尔值，指示如果订单由于时间或状态无效，是否回退。
+    // orderHash: 订单哈希值。
+    // numerator: 一个值，指示将要履行的订单部分。
+    // denominator: 一个值，指示订单的总大小。
+
     // 时间验证： 首先检查订单的有效期，确保当前时间在 startTime 和 endTime 之间。
     // 分数验证： 检查订单完成分数 (numerator 和 denominator) 是否合法，包括：
     // 分子不能超过分母。
@@ -462,6 +472,13 @@ contract OrderValidator is Executor, ZoneInteraction {
      *                        the order status.
      * @param revertOnInvalid Whether to revert if an order is already filled.
      */
+     // 通过将提供的履行分数应用于剩余的订单分数来更新订单的状态。
+     // 如果 revertOnInvalid 为 true，则如果订单不可用或无法将提供的履行分数应用于剩余数量
+     // （例如，如果没有足够的剩余订单来履行提供的分数，或者分数不能用两个 uint120 值表示），则该函数将回退。
+    //  orderHash: 订单的哈希值。
+    // numerator: 要写入订单状态的已履行分数的分子。
+    // denominator: 要写入订单状态的已履行分数的分母。
+    // revertOnInvalid: 如果订单已履行，是否回退。
     function _updateStatus(
         bytes32 orderHash,
         uint256 numerator,
@@ -637,6 +654,14 @@ contract OrderValidator is Executor, ZoneInteraction {
      *
      * @return orderHash   The order hash.
      */
+
+     // 生成合约订单。当向合约订单提供基于集合范围的标准的项目（标准 = 0）作为输入时，
+     // 合约提供者可以完全自由地选择他们在飞行中想要的任何标识符，这与通常的行为不同。
+     // 对于标识符或标准 = 0 的常规基于标准的订单，履行者可以通过提供标准解析器来选择要接收的标识符。
+     // 对于标识符或标准 = 0 的合约要约，Seaport 不期望相应的标准解析器，如果提供了一个，则会回退。
+    //  orderParameters: 订单参数。
+    // context: 生成订单的上下文。
+    // revertOnInvalid: 如果输入无效，是否回退。
     function _getGeneratedOrder(
         OrderParameters memory orderParameters,
         bytes memory context,
@@ -735,6 +760,9 @@ contract OrderValidator is Executor, ZoneInteraction {
      * @return cancelled A boolean indicating whether the supplied orders were
      *                   successfully cancelled.
      */
+     //取消任意数量的订单。注意，只有给定订单的提供者或区域可以取消它。
+     //调用者应通过调用 getOrderStatus 并确认 isCancelled 返回 true 来确保预期的订单已被取消。
+     //还要注意，合约订单不可取消。
     function _cancel(
         OrderComponents[] calldata orders
     ) internal returns (bool cancelled) {
@@ -822,6 +850,10 @@ contract OrderValidator is Executor, ZoneInteraction {
      * @return validated A boolean indicating whether the supplied orders were
      *                   successfully validated.
      */
+     //验证任意数量的订单，从而将其签名注册为有效，并允许履行者在履行时跳过签名验证。
+     //请注意，已验证的订单可能仍然无法履行，原因是项目数量无效或其他因素；
+     //调用者应在执行之前通过模拟履行调用来确定已验证的订单是否可履行。
+     //还要注意，任何人都可以验证已签名的订单，但只有提供者可以在不提供签名的情况下验证订单。
     function _validate(
         Order[] memory orders
     ) internal returns (bool validated) {
@@ -914,6 +946,14 @@ contract OrderValidator is Executor, ZoneInteraction {
      * @return totalSize   The total size of the order that is either filled or
      *                     unfilled (i.e. the "denominator").
      */
+     // 通过哈希值检索给定订单的状态，包括订单是否已被取消或验证，以及订单已履行的部分。
+     // 由于 _orderStatus[orderHash] 不会为合约订单设置，因此 getOrderStatus 对于这些哈希值将始终返回 (false, false, 0, 0)。
+     // 请注意，此函数容易受到视图重入攻击，因此从其他合约调用时应谨慎使用。
+
+    //  isValidated: 一个布尔值，指示相关订单是否已验证（即先前已批准或部分履行）。
+    // isCancelled: 一个布尔值，指示相关订单是否已取消。
+    // totalFilled: 订单已履行的总部分（即“分子”）。
+    // totalSize: 已履行或未履行的订单总大小（即“分母”）。
     function _getOrderStatus(
         bytes32 orderHash
     )
@@ -950,6 +990,7 @@ contract OrderValidator is Executor, ZoneInteraction {
      * @return isFullOrder A boolean indicating whether the order type only
      *                     supports full fills.
      */
+     //检查给定的订单类型是否指示不支持部分履行（例如，相关订单仅允许“完全履行”）。
     function _doesNotSupportPartialFills(
         OrderType orderType,
         uint256 numerator,

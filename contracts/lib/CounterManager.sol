@@ -34,6 +34,7 @@ contract CounterManager is ConsiderationEventsAndErrors, ReentrancyGuard {
      *
      * @return newCounter The new counter.
      */
+     //通过以大幅度的、准随机的间隔递增计数器来批量取消给定提供者的所有订单
     function _incrementCounter() internal returns (uint256 newCounter) {
         // Ensure that the reentrancy guard is not currently set.
         _assertNonReentrant();

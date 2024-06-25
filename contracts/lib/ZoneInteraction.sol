@@ -48,6 +48,7 @@ import {
  * @author 0age
  * @notice ZoneInteraction contains logic related to interacting with zones.
  */
+ //是处理与区域 (Zone) 相关的逻辑，主要是验证受限订单 (Restricted Order) 是否被授权，以及调用区域合约的 validateOrder 和 ratifyOrder 函数
 contract ZoneInteraction is
     ConsiderationEncoder,
     ZoneInteractionErrors,
@@ -63,6 +64,7 @@ contract ZoneInteraction is
      * @param orderHash  The hash of the order.
      * @param orderType  The order type.
      */
+     // 验证基本订单的授权状态。如果订单类型是受限的，并且调用者不是订单的区域或提供者，则会调用区域合约的 authorizeOrder 函数进行授权检查
     function _assertRestrictedBasicOrderAuthorization(
         bytes32 orderHash,
         OrderType orderType
@@ -126,6 +128,7 @@ contract ZoneInteraction is
      *                    Note that the initial value will contain the size
      *                    and the memory location for order hashes length.
      */
+     // 验证基本订单的有效性。如果订单类型是受限的，并且调用者不是订单的区域或提供者，则会调用区域合约的 validateOrder 函数进行有效性检查
     function _assertRestrictedBasicOrderValidity(
         bytes32 orderHash,
         OrderType orderType,
@@ -196,6 +199,7 @@ contract ZoneInteraction is
      *                 revertOnInvalid is true, in which case this function
      *                 will revert).
      */
+     //检查高级订单的授权状态。如果订单类型是受限的，并且调用者不是订单的区域或提供者，则会调用区域合约的 authorizeOrder 函数进行授权检查
     function _checkRestrictedAdvancedOrderAuthorization(
         AdvancedOrder memory advancedOrder,
         bytes32[] memory orderHashes,
@@ -247,6 +251,7 @@ contract ZoneInteraction is
      * @param orderHash       The hash of the order.
      * @param orderIndex      The index of the order.
      */
+     //验证高级订单的授权状态。如果订单类型是受限的，并且调用者不是订单的区域或提供者，则会调用区域合约的 authorizeOrder 函数进行授权检查。
     function _assertRestrictedAdvancedOrderAuthorization(
         AdvancedOrder memory advancedOrder,
         bytes32[] memory orderHashes,
@@ -293,6 +298,7 @@ contract ZoneInteraction is
      *                      the current fulfillment.
      * @param orderHash     The hash of the order.
      */
+     // 验证受限订单和合约订单的执行后有效性。
     function _assertRestrictedAdvancedOrderValidity(
         AdvancedOrder memory advancedOrder,
         bytes32[] memory orderHashes,
@@ -379,6 +385,7 @@ contract ZoneInteraction is
      * @return mustValidate True if the order type is restricted and the caller
      *                      is not the specified zone, false otherwise.
      */
+     //判断指定的订单类型是否为受限类型，并且调用者不是指定的区域。
     function _isRestrictedAndCallerNotZone(
         OrderType orderType,
         address zone
@@ -407,6 +414,8 @@ contract ZoneInteraction is
      * @param callData      The data to pass to the contract call.
      * @param size          The size of calldata.
      */
+     //使用给定的数据调用指定的目标合约，并检查调用的状态。
+     //如果返回了回退原因，则会“冒泡”传递回退原因，否则回退调用将根据提供的错误处理程序抛出一个通用错误。
     function _callAndCheckStatus(
         address target,
         bytes32 orderHash,
@@ -476,6 +485,7 @@ contract ZoneInteraction is
      * @param revertOnInvalid Whether to revert if the call is invalid. Must
      *                        still revert if the call returns invalid data.
      */
+     //使用给定的数据调用指定的目标合约，并检查调用的状态。如果返回了回退原因，则会“冒泡”传递回退原因，否则回退调用将根据提供的错误处理程序抛出一个通用错误。
     function _callAndCheckStatusWithSkip(
         address target,
         bytes32 orderHash,

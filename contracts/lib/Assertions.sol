@@ -76,6 +76,8 @@ contract Assertions is
      *
      * @return The hash.
      */
+     //确保提供的对价数组长度不小于订单的原始对价数组长度。这是为了防止有人在订单履行时偷偷减少需要支付的对价
+     //获取订单提供者的当前计数器，并用它来计算订单哈希
     function _assertConsiderationLengthAndGetOrderHash(
         OrderParameters memory orderParameters
     ) internal view returns (bytes32) {
@@ -103,6 +105,9 @@ contract Assertions is
      * @param originalConsiderationItemTotal The number of consideration items
      *                                       supplied on initial order creation.
      */
+     //确保订单履行时提供的对价项目总数不小于订单创建时的原始对价项目总数
+     //履行订单时提供的对价项目总数
+     //订单创建时提供的对价项目总数
     function _assertConsiderationLengthIsNotLessThanOriginalConsiderationLength(
         uint256 suppliedConsiderationItemTotal,
         uint256 originalConsiderationItemTotal
@@ -119,6 +124,7 @@ contract Assertions is
      *
      * @param amount The amount to check.
      */
+     //确保给定的项目数量不为零。这是为了防止出现零数量的项目，这在大多数情况下是无效的
     function _assertNonZeroAmount(uint256 amount) internal pure {
         assembly {
             if iszero(amount) {
@@ -140,6 +146,7 @@ contract Assertions is
      *      supplied as all basic order functions use the same calldata
      *      encoding.
      */
+     //验证基本订单参数中的 calldata 偏移量是否有效。这可以确保使用 calldata 对象的函数和使用汇编函数读取相同的数据，并且限制在一定范围内的值确实在该范围内
     function _assertValidBasicOrderParameters() internal pure {
         // Declare a boolean designating basic order parameter offset validity.
         bool validOffsets;

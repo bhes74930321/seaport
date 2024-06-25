@@ -58,6 +58,20 @@ contract SignatureVerification is SignatureVerificationErrors, LowLevelHelpers {
      * @param signature               A signature from the signer indicating
      *                                that the order has been approved.
      */
+     //_assertValidSignature 函数的作用是验证订单签名，确保订单是由合法的提供者签署的。
+    // 它支持以下三种签名方式：
+    // 标准 ECDSA 签名 (65 字节)
+    // EIP-2098 短签名 (64 字节)
+    // EIP-1271 合约签名
+    // 检查签名长度: 如果签名长度是 64 或 65 字节，则尝试使用 ECDSA 恢复签名者地址。
+    // ECDSA 签名验证:
+    // 如果恢复出的地址与提供的 signer 地址匹配，并且恢复出的地址不是零地址，则签名有效。
+    // 如果恢复失败，或者恢复出的地址与 signer 地址不匹配，则继续进行 EIP-1271 检查。
+    // EIP-1271 合约签名验证:
+    // 如果 signer 是一个合约地址，则调用该合约的 isValidSignature 函数进行验证。
+    // 如果调用成功，并且返回值是 EIP1271_isValidSignature_selector，则签名有效。
+    // 如果调用失败，或者返回值不匹配，则签名无效
+    // 对于批量订单 (BulkOrder)，会先使用 _computeBulkOrderProof 函数计算出批量订单的根哈希和对应的证明，然后再进行签名验证。
     function _assertValidSignature(
         address signer,
         bytes32 digest,

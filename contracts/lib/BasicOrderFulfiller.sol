@@ -131,6 +131,7 @@ import {
  *         orders with minimal overhead. See documentation for details on what
  *         qualifies as a basic order.
  */
+ // 处理 Seaport 中的基本订单 (Basic Order)，它针对特定类型的简单订单提供了优化的履行流程，从而降低 gas 消耗
 contract BasicOrderFulfiller is OrderValidator {
     /**
      * @dev Derive and set hashes, reference chainId, and associated domain
@@ -159,6 +160,7 @@ contract BasicOrderFulfiller is OrderValidator {
      *
      * @return A boolean indicating whether the order has been fulfilled.
      */
+     //验证并履行基本订单，支持六种基本路线类型：原生代币到 ERC721、原生代币到 ERC1155、ERC20 到 ERC721、ERC20 到 ERC1155、ERC721 到 ERC20 和 ERC1155 到 ERC20（原生代币作为 msg.value 提供）。
     function _validateAndFulfillBasicOrder() internal returns (bool) {
         // Declare enums for order type & route to extract from basicOrderType.
         BasicOrderRouteType route;
@@ -429,6 +431,12 @@ contract BasicOrderFulfiller is OrderValidator {
      *                                     the order.
      * @return orderHash The calculated order hash.
      */
+     //使用手动 calldata 和内存访问准备基本订单的履行。它计算订单哈希，发出 OrderFulfilled 事件，并断言基本订单的有效性。
+    //  orderType: 订单类型。
+    // receivedItemType: 订单上第一个对价项目的项目类型。
+    // additionalRecipientsItemType: 订单上任何附加对价项目的项目类型。
+    // additionalRecipientsToken: 订单上任何附加对价项目的 ERC20 代币合约地址（如果适用）。
+    // offeredItemType: 订单上提供的项目的项目类型。
     function _prepareBasicFulfillmentFromCalldata(
         OrderType orderType,
         ItemType receivedItemType,
@@ -1143,6 +1151,10 @@ contract BasicOrderFulfiller is OrderValidator {
      *                   signifies that no conduit should be used, with direct
      *                   approvals set on this contract.
      */
+     // 将单个 ERC721 或 ERC1155 项目从给定的发起者转移到给定的接收者。
+     // 累积器将被绕过，这意味着该函数应在可以将多个项目转移累积到单个管道调用中的情况下使用。
+     // 必须设置足够的批准，无论是在相应的管道上还是在此合约本身上。
+     // 请注意，此函数只能作为基本订单的一部分安全调用，因为它假定必须首先验证特定的 calldata 编码结构
     function _transferIndividual721Or1155Item(
         ItemType itemType,
         bytes32 conduitKey
@@ -1265,6 +1277,9 @@ contract BasicOrderFulfiller is OrderValidator {
      *      may only be safely called as part of basic orders, as it assumes a
      *      specific calldata encoding structure that must first be validated.
      */
+     // 将以太币（或其他原生代币）转移给给定的接收者，作为基本订单履行的一部分。
+     // 请注意，管道不用于原生代币，因为转移的金额必须作为 msg.value 提供。还要注意，
+     // 此函数只能作为基本订单的一部分安全调用，因为它假定必须首先验证特定的 calldata 编码结构。
     function _transferNativeTokensAndFinalize() internal {
         // Put native token value supplied by the caller on the stack.
         uint256 nativeTokensRemaining = msg.value;
@@ -1357,6 +1372,9 @@ contract BasicOrderFulfiller is OrderValidator {
      * @param accumulator An open-ended array that collects transfers to execute
      *                    against a given conduit in a single call.
      */
+     // 将 ERC20 代币转移给给定的接收者，作为基本订单履行的一部分。
+     // 注意，此函数只能作为基本订单的一部分安全调用，因为它假定必须首先验证特定的 calldata 编码结构。
+     // 还要注意，基本订单参数是使用固定偏移量检索的，这要求已经验证了严格的基本订单编码。 
     function _transferERC20AndFinalize(
         bool fromOfferer,
         bytes memory accumulator

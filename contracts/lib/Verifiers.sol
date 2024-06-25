@@ -55,6 +55,7 @@ contract Verifiers is Assertions, SignatureVerification {
      *
      * @return valid A boolean indicating whether the order is active.
      */
+     // 验证当前时间是否在订单的有效时间范围内。
     function _verifyTime(
         uint256 startTime,
         uint256 endTime,
@@ -87,6 +88,7 @@ contract Verifiers is Assertions, SignatureVerification {
      * @param signature A signature from the offerer indicating that the order
      *                  has been approved.
      */
+     //验证订单的签名。它支持标准 ECDSA 签名、EIP-2098 短签名和 EIP-1271 合约签名。
     function _verifySignature(
         address offerer,
         bytes32 orderHash,
@@ -145,6 +147,8 @@ contract Verifiers is Assertions, SignatureVerification {
      *
      * @return validLength True if bulk order size is valid, false otherwise.
      */
+     //确定指定的批量订单大小是否有效。
+     //signatureLength: 要检查的批量订单的签名长度。
     function _isValidBulkOrderSize(
         uint256 signatureLength
     ) internal pure returns (bool validLength) {
@@ -180,6 +184,7 @@ contract Verifiers is Assertions, SignatureVerification {
      *
      * @return bulkOrderHash The bulk order hash.
      */
+     //计算指定证明和叶子的批量订单哈希值。请注意，如果索引超过批量订单有效负载中的订单数量，则会“回绕”并引用较早的索引。
     function _computeBulkOrderProof(
         bytes memory proofAndSignature,
         bytes32 leaf
@@ -260,6 +265,11 @@ contract Verifiers is Assertions, SignatureVerification {
      *
      * @return valid A boolean indicating whether the order is valid.
      */
+     // 根据订单状态验证给定订单是否可履行且未取消
+    // orderHash: 订单的哈希值。
+    // orderStatus: 订单状态的存储引用。
+    // onlyAllowUnused: 一个布尔值标志，指示调用函数是否仅支持未使用过的订单。
+    // revertOnInvalid: 一个布尔值，指示如果订单已被取消或已履行超过允许的数量，是否回退。
     function _verifyOrderStatus(
         bytes32 orderHash,
         OrderStatus storage orderStatus,
