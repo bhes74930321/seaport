@@ -39,6 +39,8 @@ contract AmountDeriver is AmountDerivationErrors {
      *
      * @return amount The current amount.
      */
+     //根据当前时间，在起始数量和结束数量之间进行线性插值，计算出当前的项目数量
+     //currentAmount = ((startAmount * remaining) + (endAmount * elapsed))/duration
     function _locateCurrentAmount(
         uint256 startAmount,
         uint256 endAmount,
@@ -110,6 +112,8 @@ contract AmountDeriver is AmountDerivationErrors {
      *
      * @return newValue The value after applying the fraction.
      */
+     //返回给定值的指定分数，并确保结果值没有任何小数部分。它会检查分数是否可以被值整除，如果不能整除，则会回退。
+     //newValue = (value * numerator)/denominator
     function _getFraction(
         uint256 numerator,
         uint256 denominator,
@@ -123,6 +127,8 @@ contract AmountDeriver is AmountDerivationErrors {
         // Ensure fraction can be applied to the value with no remainder. Note
         // that the denominator cannot be zero.
         assembly {
+            // mulmod(value, numerator, denominator) 等价于 (value * numerator) % denominator
+            // 确保(value * numerator)/denominator的余数为0
             // Ensure new value contains no remainder via mulmod operator.
             // Credit to @hrkrshnn + @axic for proposing this optimal solution.
             if mulmod(value, numerator, denominator) {
@@ -160,6 +166,9 @@ contract AmountDeriver is AmountDerivationErrors {
      *
      * @return amount The received item to transfer with the final amount.
      */
+     //将分数应用于对价或要约项目。
+     //如果起始数量和结束数量相同，则将分数直接应用于结束数量。
+     //否则，将分数应用于起始数量和结束数量，并根据当前时间找到线性拟合值。
     function _applyFraction(
         uint256 startAmount,
         uint256 endAmount,
@@ -171,9 +180,13 @@ contract AmountDeriver is AmountDerivationErrors {
     ) internal view returns (uint256 amount) {
         // If start amount equals end amount, apply fraction to end amount.
         if (startAmount == endAmount) {
+            // amount = (endAmount * numerator)/denominator
             // Apply fraction to end amount.
             amount = _getFraction(numerator, denominator, endAmount);
         } else {
+            // startAmount = (startAmount * numerator)/denominator
+            // endAmount = (endAmount * numerator)/denominator
+            // amount = ((startAmount * remaining) + (endAmount * elapsed))/duration
             // Otherwise, apply fraction to both and interpolated final amount.
             amount = _locateCurrentAmount(
                 _getFraction(numerator, denominator, startAmount),

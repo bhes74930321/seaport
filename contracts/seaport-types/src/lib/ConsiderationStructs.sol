@@ -46,6 +46,8 @@ struct OrderComponents {
  *      increasing or decreasing amounts over the duration of the respective
  *      order.
  */
+ //如果ItemType是ERC721_WITH_CRITERIA或ERC1155_WITH_CRITERIA，
+ //那么identifierOrCriteria就是所有要提供的nftid的merkle root
 struct OfferItem {
     ItemType itemType;
     address token;
@@ -59,6 +61,8 @@ struct OfferItem {
  *      an additional sixth component designating the required recipient of the
  *      item.
  */
+//如果ItemType是ERC721_WITH_CRITERIA或ERC1155_WITH_CRITERIA，
+//那么identifierOrCriteria就是所有要提供的nftid的merkle root
 struct ConsiderationItem {
     ItemType itemType;
     address token;
@@ -88,7 +92,7 @@ struct SpentItem {
 struct ReceivedItem {
     ItemType itemType;
     address token;
-    uint256 identifier;
+    uint256 identifier; //tokenId
     uint256 amount;
     address payable recipient;
 }
@@ -200,11 +204,11 @@ struct OrderStatus {
  *      criteria.
  */
 struct CriteriaResolver {
-    uint256 orderIndex;
-    Side side;
-    uint256 index;
-    uint256 identifier;
-    bytes32[] criteriaProof;
+    uint256 orderIndex; //advanceOrderIndex
+    Side side; //offer or consideration
+    uint256 index; //itemIndex advanceOrder[orderIndex].offer/Consideration[index]
+    uint256 identifier; //tokenId
+    bytes32[] criteriaProof; //merkle proof
 }
 
 /**
@@ -227,8 +231,8 @@ struct Fulfillment {
  *      order and another referencing a specific offer or consideration item.
  */
 struct FulfillmentComponent {
-    uint256 orderIndex;
-    uint256 itemIndex;
+    uint256 orderIndex; //advanceOrder Index
+    uint256 itemIndex; //itemIndex advanceOrder[orderIndex].offer/Consideration[itemIndex]
 }
 
 /**

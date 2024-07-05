@@ -52,6 +52,7 @@ import {
  *         resolving criteria-based items.
  */
 contract CriteriaResolution is CriteriaResolutionErrors {
+    //CriteriaResolution.sol 合约在 Seaport 中专门处理基于标准的项目 (Criteria-based Item)，它提供了一组函数用于解析和验证这些项目，确保它们在订单履行时被正确地解析和匹配
     /**
      * @dev Internal pure function to apply criteria resolvers containing
      *      specific token identifiers and associated proofs to order items.
@@ -88,6 +89,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                 // Read the order index from memory and place it on the stack.
                 uint256 orderIndex = criteriaResolver.orderIndex;
 
+                // 检查 orderIndex 是否在AdvancedOrder范围内
                 // Ensure that the order index is in range.
                 if (orderIndex >= totalAdvancedOrders) {
                     _revertOrderCriteriaResolverOutOfRange(
@@ -98,6 +100,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                 // Retrieve the referenced advanced order.
                 AdvancedOrder memory advancedOrder = advancedOrders[orderIndex];
 
+                // 如果订单未被履行，跳过标准解析
                 // Skip criteria resolution for order if not fulfilled.
                 if (advancedOrder.numerator == 0) {
                     continue;
@@ -108,6 +111,8 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                     advancedOrder.parameters
                 );
 
+                // 如果 criteriaResolver.side 为 OFFER，则将 items 指向 offer 数组
+                // 如果 criteriaResolver.side 为 CONSIDERATION，则将 items 指向 consideration 数组
                 {
                     // Get a pointer to the list of items to give to
                     // _updateCriteriaItem. If the resolver refers to a
@@ -167,6 +172,9 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                         }
                     }
 
+                    // 验证解析器指定的tokenId是否在criteriaResolver.criteriaProof中
+                    // 替换offerItem或considerationItem里的merkle root为criteriaResolver指定的tokenId
+                    // 更新offerItem或considerationItem的itemType为ERC721或ERC1155
                     // Apply the criteria resolver to the item in question.
                     _updateCriteriaItem(
                         items,
@@ -176,6 +184,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                 }
             }
 
+            // 再次遍历 advancedOrders 数组，确保所有必要的标准项目都已解析
             // Iterate over each advanced order.
             for (uint256 i = 0; i < totalAdvancedOrders; ++i) {
                 // Retrieve the advanced order.
@@ -222,11 +231,12 @@ contract CriteriaResolution is CriteriaResolutionErrors {
      * @param orderType      The type of order being examined.
      * @param revertSelector The selector to use when reverting.
      */
+     // 确保所有的item都已经解析
     function _ensureAllRequiredCriteriaResolved(
         uint256 orderIndex,
         ConsiderationItem[] memory items,
         OrderType orderType,
-        uint256 revertSelector
+        uint256 revertSelector //UnresolvedOfferCriteria(uint256 orderIndex, uint256 offerIndex);的地址
     ) internal pure {
         // Read items array length from memory and place on stack.
         uint256 totalItems = items.length;
@@ -245,9 +255,10 @@ contract CriteriaResolution is CriteriaResolutionErrors {
                     gt(itemType, 3), // Criteria-based item
                     or(
                         iszero(eq(orderType, 4)), // not OrderType.CONTRACT
-                        iszero(iszero(identifierOrCriteria)) // not wildcard
+                        iszero(iszero(identifierOrCriteria)) // not wildcard identifierOrCriteria=0表示不指定tokenId，可以是任意的tokenId
                     )
                 ) {
+                    //UnresolvedOfferCriteria(uint256 orderIndex, uint256 offerIndex);
                     // Store left-padded selector with push4 (reduces bytecode),
                     // mem[28:32] = selector
                     mstore(0, revertSelector)
@@ -307,6 +318,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
      * @param componentIndex    The index of the item to update.
      * @param criteriaResolver  The criteria resolver to use to update the item.
      */
+     // 虽然传参是 OfferItem[] memory offer，但实际上是传入了 OrderParameters.offer 或 OrderParameters.consideration
     function _updateCriteriaItem(
         OfferItem[] memory offer,
         uint256 componentIndex,
@@ -318,6 +330,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
         // Read item type and criteria from memory & place on stack.
         ItemType itemType = offerItem.itemType;
 
+        // 确保item是ERC721_WITH_CRITERIA或ERC1155_WITH_CRITERIA类型
         // Ensure the specified item type indicates criteria usage.
         if (!_isItemWithCriteria(itemType)) {
             _revertCriteriaNotEnabledForItem();
@@ -327,6 +340,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
 
         // If criteria is not 0 (i.e. a collection-wide criteria-based item)...
         if (identifierOrCriteria != uint256(0)) {
+            // 证明指定的tokenId在criteriaResolver.criteriaProof中
             // Verify identifier inclusion in criteria root using proof.
             _verifyProof(
                 criteriaResolver.identifier,
@@ -338,6 +352,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
             _revertInvalidProof();
         }
 
+        // 把itemType转换为ERC721或ERC1155
         // Update item type to remove criteria usage.
         // Use assembly to operate on ItemType enum as a number.
         ItemType newItemType;
@@ -347,6 +362,7 @@ contract CriteriaResolution is CriteriaResolutionErrors {
         }
         offerItem.itemType = newItemType;
 
+        // 用criteriaResolver指定的tokenId 替换掉 merkle root
         // Update identifier w/ supplied identifier.
         offerItem.identifierOrCriteria = criteriaResolver.identifier;
     }

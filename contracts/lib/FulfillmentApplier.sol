@@ -87,6 +87,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
     ) internal pure returns (Execution memory execution) {
         // Ensure 1+ of both offer and consideration components are supplied.
         assembly {
+            //确保offerComponents和considerationComponents的长度都大于0
             if or(
                 iszero(mload(offerComponents)),
                 iszero(mload(considerationComponents))
@@ -112,6 +113,8 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
         Execution memory considerationExecution;
 
         // Validate & aggregate consideration items to new Execution object.
+        // considerationComponents所指定的consideration聚合到一个execution中
+        // 并且considerationComponents所指定的consideration的itemType, token, identifier, recipient必须相同
         _aggregateValidFulfillmentConsiderationItems(
             advancedOrders,
             considerationComponents,
@@ -141,6 +144,11 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
         // Ensure offer & consideration item types, tokens, & identifiers match.
         // (a != b || c != d || e != f) == (((a ^ b) | (c ^ d) | (e ^ f)) != 0),
         // but the second expression requires less gas to evaluate.
+        // if (
+        // executionItem.itemType != considerationItem.itemType ||
+        // executionItem.token != considerationItem.token ||
+        // executionItem.identifier != considerationItem.identifier
+        // )
         assembly {
             if or(
                 or(
@@ -158,6 +166,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
                     mload(add(considerationItem, Common_identifier_offset))
                 )
             ) {
+                // 等价于revert MismatchedFulfillmentOfferAndConsiderationComponents(fulfillmentIndex);
                 // Store left-padded selector with push4 (reduces bytecode),
                 // mem[28:32] = selector
                 mstore(
@@ -304,6 +313,7 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
             let errorBuffer
 
             // Declare a variable for the hash of itemType, token, & identifier.
+            //存储 (itemType, token, identifier) 哈希值的变量
             let dataHash
 
             // 遍历offerComponents
@@ -595,6 +605,8 @@ contract FulfillmentApplier is FulfillmentApplicationErrors {
      * @param conduitKey              A bytes32 value indicating the conduit key
      *                                to set on the execution.
      */
+     // considerationComponents所指定的consideration聚合到一个execution中
+     // 并且considerationComponents所指定的consideration的itemType, token, identifier, recipient必须相同
     function _aggregateValidFulfillmentConsiderationItems(
         AdvancedOrder[] memory advancedOrders,
         FulfillmentComponent[] memory considerationComponents,
